@@ -8,6 +8,17 @@ Amendment Log) and are corrected there, not here. Read this doc for the
 **rationale** (why Go over Rust, what Weave gets right/wrong, comparison
 tables) — for anything you're about to implement against (exact SQL, exact
 launch flag, exact CLI commands, exact dependency versions), use ADR-001.
+
+> **2026-08-07 review note:** ADR-001's second 2026-08-07 amendment further
+> changed decisions documented below. Where this doc disagrees with ADR-001,
+> ADR-001 wins. In particular: `traces` gained a `run_id` and `card_id` is
+> `NOT NULL`; `cards` gained `codebase_id` and **dropped `status`**; prompts
+> now include objective + optional verification/test sections; `loom init`
+> semantics, default columns, current-workspace persistence, config schema,
+> and `loom artifact` CLI are all defined in ADR-001 §5–§6; the old
+> process-group-cleanup mitigation below (§10) no longer applies (tmux owns
+> the process); and `loom card open` is **interactive attach**, not a
+> no-TUI launch.
 **Date:** 2026-07-02
 **Goal:** Design a standalone CLI tool that combines a Kanban board with Claude Code launch capability, inspired by Weave's architecture but rebuilt as a terminal-native, user-driven experience.
 
@@ -35,7 +46,7 @@ Weave (web-based multi-agent coordination platform) achieves something unique:
 |---------|---------------|---------------|
 | **Interaction model** | Web UI (React/SSE) | Terminal (BubbleTea TUI + CLI commands) |
 | **Agent backend** | Automated subprocess + structured prompts | User-driven tmux-session launch (attach/detach) |
-| **Persistence** | SQLite via Axum REST API | SQLite with direct rusqlite access |
+| **Persistence** | SQLite via Axum REST API | SQLite via `modernc.org/sqlite` (pure Go, no CGO) |
 | **Kanban UI** | React + @dnd-kit horizontal scroll | Terminal columnar layout with keyboard navigation |
 | **Startup** | `./weave-server --port 3000` then browser | `loom start` → TUI or `loom card add "task"` |
 | **Extensibility** | Trait-based agent registry | Subprocess invocation |
@@ -207,7 +218,7 @@ CREATE TABLE notes (
 
 ```
 loom                                    # Launch TUI (default)
-loom init                               # Initialize loom in current directory
+loom init [<dir>]                       # Initialize loom (workspace + default board/columns)
 loom config                             # Show/edit configuration
 loom workspace                          # Workspace management
   loom workspace list
@@ -218,27 +229,45 @@ loom workspace                          # Workspace management
 loom board                              # Board management
   loom board list
   loom board create <name>
-  loom board create <name> --template standard|empty
   loom board show <name>
   loom board delete <name>
 loom card                               # Card management
   loom card add <title> [--description <text>] [--board <name>] [--column <name>]
-  loom card list [--board <name>] [--column <name>] [--filter <status>]
+  loom card list [--board <name>] [--column <name>] [--search <q>]
   loom card show <id>
   loom card move <id> <column>
-  loom card open <id>                   # Launch Claude Code for card (CLI, no TUI)
+  loom card open <id>                   # Interactive: create-if-needed + ATTACH to the card's tmux session (same as Enter in the TUI)
+  loom card open <id> --detach          # Create the session and return (scriptable "start the agent")
+  loom card close <id>                  # Kill session + finalize the run's trace (non-interactive)
   loom card update <id> [--title <text>] [--description <text>] [--priority <p>]
   loom card delete <id>
+  loom attach <id>                      # Attach to a running card session
+  loom sessions                         # List active loom tmux sessions → card mapping
 loom column                             # Column management
   loom column add <name> [--board <name>] [--stage <stage>]
   loom column list [--board <name>]
+  loom column delete <name> [--board <name>]
+loom artifact                           # Artifacts (user-managed evidence)
+  loom artifact add <card-id> <name> [--type <type>] [--content <text>]
+  loom artifact list <card-id>
+  loom artifact show <id>
+  loom artifact delete <id>
+loom note                               # Notes management
+  loom note add <title> [--content <text>] [--type <type>]
+  loom note list
+  loom note show <id>
+  loom note delete <id>
 loom status                             # Show overall status (board summary, recent traces)
 loom version                            # Show version
 loom help                               # Show help
 ```
 
+> The 2026-08-07 review dropped the earlier `--template standard|empty` board
+> flag and the `--filter <status>` card flag (workflow state is the column,
+> not a status field). Full flag surface: ADR-001 §6.
+
 ### Key CLI design principles
-1. **Non-TUI commands work without a terminal** — `loom card add`, `loom card move`, `loom card open` are pure CLI tools usable in scripts.
+1. **Non-TUI commands work without a terminal** — `loom card add`, `loom card move`, `loom card close`, `loom card open --detach` are pure CLI tools usable in scripts. (`loom card open` without `--detach` is interactive attach and holds the terminal.)
 2. **TUI is launched without subcommands** — `loom` alone launches the interactive TUI.
 3. **CLI commands mirror the TUI actions** — everything you can do in the TUI you can do with CLI commands, enabling CI/CD integration.
 
@@ -268,20 +297,25 @@ loom help                               # Show help
 Keybindings:
   j/k or ↓/↑    Navigate cards
   h/l or ←/→    Navigate columns
-  Enter          Launch Claude Code for selected card
   Enter          Open card: create (if needed) + attach to its tmux session
   K              Kill selected card's session + finalize its trace
   n              New card
   N              New column
   m              Move card (then select target column)
+  d              Card detail view
+  e              Edit card fields
   /              Search/filter cards
   s              Switch board
   w              Switch workspace
   ?              Help
   q              Quit
   Q              Force quit
-Ctrl+c           Quit
+  Ctrl+c         Quit
 ```
+
+> The 2026-08-07 review removed the earlier duplicate "Enter — Launch Claude
+> Code" line (opening a card *is* the launch) and added `e` (edit). This list
+> matches ADR-001 §3.5, which is canonical.
 
 Session indicators: `●` = session running (agent live), `◉` = someone
 attached, blank = idle.
@@ -332,23 +366,24 @@ When the user presses Enter on a card from the board view:
 
 ```
 1. User presses Enter on a card in the board view (or `loom card open <id>`)
-2. loom reads card from DB, gets workspace root_path
+2. loom reads card from DB, resolves the watch scope root (card's codebase
+   path, else workspace root_path)
 3. SessionManager.ensure(card):
    - if session `loom-<id>` exists → reuse it
    - else `tmux -L loom new-session -d -s loom-<id> -c <root>
-        "claude 'Card: {title}\n\nDescription: … Acceptance Criteria: …'"`
+        "claude '<card context>'"`
      (POSIX single-quoted positional prompt — never -p/--print)
-4. loom records trace_start (with git baseline) and starts the fsnotify watcher
+4. loom generates a run_id, records trace_start (with git baseline) and
+   starts the fsnotify watcher
 5. loom calls tea.ExecProcess("tmux", ["-L","loom","attach-session","-t","loom-<id>"])
    → the terminal shows Claude Code's native TUI
 6. The user watches/steers/answers prompts, then detaches (`prefix-d`)
    → back at the board; the agent keeps running in its session
 7. Claude exits (or the user kills it) → the session disappears
 8. loom's 2s poll detects the session is gone → stops fsnotify, reconciles
-   `git diff` vs the baseline, records file_change events, records trace_end
-```
-10. loom records trace_end event
-11. User is returned to the kanban board
+   against the git baseline (porcelain-snapshot diff + `git diff` if HEAD
+   moved, deduped against live events), records file_change events and
+   trace_end for the run_id
 ```
 - **tmux sessions, not a direct child process** — Each card is its own
   detached `-L loom` tmux session whose command is `claude`. tmux owns the PTY
@@ -360,20 +395,24 @@ When the user presses Enter on a card from the board view:
   *optionally* in the loop: attach to watch/steer/interrupt, detach and let the
   agent continue, reattach later — even after loom itself has exited.
 - **Concurrent cards** — N cards, N sessions, no cap. Enter on a running card
-  just reattaches.
+  just reattaches. (The real cost is the API budget each live Claude Code
+  consumes, not tmux; see ADR-001 §4.2.)
 - **Card context as initial prompt** — Passed as a POSIX single-quoted
   positional argument so the session command is `claude '<card context>'`.
   Claude Code manages its own `--resume`; loom keeps the tmux session (not the
-  conversation) alive across attach/detach.
+  conversation) alive across attach/detach. The prompt includes objective and
+  optional verification/test sections when set (ADR-001 §4.5).
 - **File tracing: fsnotify + git reconciliation** — fsnotify gives live
   granularity while a loom process runs; a git baseline (`HEAD` +
   `git status --porcelain`) captured at trace_start lets a session that
   outlived loom still attribute its file changes on completion.
 - **No output parsing** — Claude Code's output is shown as-is in the
   terminal. Loom only records filesystem side effects.
-- **No session persistence** — Claude Code manages its own `--resume` internally. Loom doesn't track sessions, messages, or conversation history.
-- **File watching via fsnotify** — Detects file changes during the Claude session. Records them as trace events for the card. The card detail view shows "Files Changed" from this history.
-- **No output parsing** — Claude Code's output is displayed as-is in the terminal. Loom only captures file system side effects.
+- **Runs, not sessions, are traced** — each open→complete cycle gets a
+  `run_id`; trace events for a cycle share it, so "Files Changed (last
+  session)" is computable (ADR-001 §3.3). Loom tracks runs and file side
+  effects only — never Claude conversation history, which stays Claude's
+  `--resume` domain.
 
 ---
 
@@ -381,28 +420,37 @@ When the user presses Enter on a card from the board view:
 
 ```
 ~/.config/loom/
-├── config.toml              # Global configuration
+├── config.toml              # Single global configuration (no project-level config in v0.1)
 └── loom.db                  # SQLite database
 
-Project directory (optional):
-.loom/
-├── config.toml              # Project-specific overrides
-└── .loomignore              # Patterns to exclude from file watching
+Workspace root (per workspace):
+.loomignore                  # gitignore-style patterns for file watching (ADR-001 §4.6)
 ```
+
+> The 2026-08-07 review dropped the earlier project-level `.loom/config.toml`
+> (per-workspace config is a v0.2 question) and moved `.loomignore` to the
+> top of the watch scope (the workspace root, or a card's codebase path).
 
 ### Sample config.toml
 
 ```toml
 [claude]
 binary = "claude"           # Path to Claude Code binary
-model = ""                  # Default model (empty = Claude's default)
+prompt_model = ""           # Default model (empty = Claude's default)
+
+[session]
+tmux_server = "loom"        # Dedicated server socket name (-L <name>)
+prefix = "C-a"              # Loom server prefix (nested-tmux safety)
 
 [database]
 path = "~/.config/loom/loom.db"
 
 [ui]
-default_board = ""          # Board to show on startup (empty = last used)
+last_workspace = ""         # Current workspace (updated on switch; not "default_board")
+last_board = ""
 ```
+
+> Config schema is canonical in ADR-001 §5; this sample matches it.
 
 ---
 
@@ -431,11 +479,12 @@ Minimal BubbleTea app with a hardcoded card list. Pressing Enter creates a detac
 - Search/filter with `/` key
 
 ### Phase 3: Polish + CLI (2-3 days)
-- `loom card open <id>` CLI command (non-TUI launch)
-- Config file (`~/.config/loom/config.toml`): claude binary path
+- `loom card open <id>` (interactive attach) / `--detach`, `loom card close <id>`, `loom attach <id>`, `loom sessions`, `loom artifact ...`
+- Config file (`~/.config/loom/config.toml`): claude binary, tmux server name / prefix, db path, ui state
 - Status bar, workspace switching
 - Notes system (user-created planning notes)
-- Card detail editing (title, description, acceptance criteria)
+- Card detail editing (title, description, objective, acceptance criteria, verification, tests, priority, labels)
+- Git-reconciliation test (session that outlives loom still attributes file changes)
 
 **Total: ~10-14 days** (down from ~25-35 days in original plan)
 
@@ -480,11 +529,12 @@ Minimal BubbleTea app with a hardcoded card list. Pressing Enter creates a detac
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| **Process group cleanup** | Medium | Use `cmd.SysProcAttr.Setpgid=true` then `syscall.Kill(-pid, SIGTERM)` + 5s timeout + SIGKILL |
+| **Process group cleanup** | Low (removed by the tmux model) | `claude` is a child of the tmux server, not loom — loom only runs short-lived tmux clients and polls sessions. The old `Setpgid`/`SIGTERM`/`SIGKILL` scheme below no longer applies; it would only return with a future daemon that spawns children directly. |
 | **SQLite concurrent access** | Low | WAL mode + single writer; `_busy_timeout=5000` in DSN |
 | **Binary size (~15MB with pure Go SQLite)** | Low | Acceptable for CLI tool; pure Go is worth the size for portability |
+| **tmux missing / too old** | Low | Detect at startup, require tmux ≥ 3.x, fail fast with an install hint; tmux-less direct-PTY fallback tracked in ADR-001 §9 |
 | **BubbleTea learning curve** | Low | Charm ecosystem has excellent tutorials; kancli is a direct reference |
-| **Lost context between Claude sessions** | Medium | Claude Code manages its own `--resume`. Loom passes card details as initial prompt but doesn't track session state. |
+| **Lost context between Claude sessions** | Medium | Claude Code manages its own `--resume`. Loom passes card details as the initial prompt and keeps the tmux session alive across attach/detach, but doesn't track session state. |
 
 ---
 
@@ -501,8 +551,8 @@ Minimal BubbleTea app with a hardcoded card list. Pressing Enter creates a detac
 
 ## 12. Resolved Design Questions
 
-1. **File watching scope**: Watch the workspace root_path. All file changes during a Claude session are recorded as trace events for the card; a git baseline captured at trace_start reconciles changes made while no loom process was alive.
-2. **Card context to Claude**: Pass card title, description, and acceptance criteria as a POSIX single-quoted **positional** prompt argument in the tmux session command (never `-p`/`--print` — see ADR-001 §4).
+1. **File watching scope**: Watch the card's codebase path when the card has a `codebase_id`, else the workspace `root_path`. All file changes during a Claude session are recorded as trace events for the card; a git baseline captured at trace_start reconciles changes made while no loom process was alive (ADR-001 §4.6).
+2. **Card context to Claude**: Pass card title, description, objective, and acceptance criteria — plus optional verification/test sections when set — as a POSIX single-quoted **positional** prompt argument in the tmux session command (never `-p`/`--print` — see ADR-001 §4.5).
 3. **Multiple cards simultaneously**: Supported from v0.1 — each card is its own detached `-L loom` tmux session; no concurrency cap. Enter on a running card reattaches.
 4. **Trace value**: Cards accumulate `file_change` events for every file modified during Claude sessions. Card detail shows "Files Changed" list. Useful for review.
 5. **Keybinding**: Enter on card = open the card's tmux session (create + attach). `K` = kill session + finalize trace. 'd' = card detail.
