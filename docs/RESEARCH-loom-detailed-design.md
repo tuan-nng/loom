@@ -19,6 +19,34 @@ launch flag, exact CLI commands, exact dependency versions), use ADR-001.
 > process-group-cleanup mitigation below (§10) no longer applies (tmux owns
 > the process); and `loom card open` is **interactive attach**, not a
 > no-TUI launch.
+
+> **2026-08-08 review note:** ADR-001's correctness review supersedes more of
+> the SQL below. Specifically: every `created_at`/`updated_at` default moves
+> from `datetime('now')` to `strftime('%Y-%m-%dT%H:%M:%f','now')`, and — because
+> even millisecond precision ties on consecutive inserts — `traces` is
+> re-keyed on a monotonic `seq INTEGER PRIMARY KEY AUTOINCREMENT` with `id`
+> demoted to `NOT NULL UNIQUE`; timestamps no longer order events. `traces`
+> also gains a partial UNIQUE index over `(card_id, run_id, event_type)` for
+> the lifecycle events. `codebases` is declared **before** `cards` (which
+> references it), and the store layer must set `PRAGMA foreign_keys = ON` per
+> connection — it is OFF by default, which would make every `ON DELETE CASCADE`
+> in the schema below inert. The `[ui] last_workspace` / `last_board` keys in
+> the config block below are **gone**: current workspace/board are runtime
+> state and live in a single-row `ui_state` table, because loom writing to a
+> hand-edited `config.toml` on every board switch destroys formatting and lets
+> concurrent invocations clobber each other. See ADR-001 §3.3, §3.4, §5.
+>
+> **2026-08-08 (scope) review note:** ADR-001 also resolved three scope
+> questions, further superseding the schema/CLI below. `notes` and `artifacts`
+> were **cut from v0.1** — the `artifacts`/`notes` tables and the
+> `loom artifact ...` / `loom note ...` CLI below are gone and return as v0.2
+> items (ADR-001 §9); v0.1 is now 6 domain tables + `ui_state`. The
+> `cards.verification_commands` / `cards.test_cases` columns are **dropped** —
+> verification/test content lives in `description`, and the prompt is built
+> from title/description/objective/acceptance-criteria only. And
+> `columns.stage` is no longer inert: moving a card to a `done`-stage column
+> auto-kills the session and finalizes the trace (ADR-001 §4.1). ADR-001 is
+> authoritative everywhere it disagrees with this doc.
 **Date:** 2026-07-02
 **Goal:** Design a standalone CLI tool that combines a Kanban board with Claude Code launch capability, inspired by Weave's architecture but rebuilt as a terminal-native, user-driven experience.
 
