@@ -19,7 +19,7 @@ The **watch scope** is the directory loom watches for file changes during a run:
 ## Where it lives
 
 - `cards.codebase_id` → `codebases.path` (ADR-001 §3.3); `session.Manager.watchRoot` selects it (DESIGN-002 §10.2).
-- Ignore rules in `trace/watcher.go`: built-in defaults (`.git`, `node_modules`, `target`, `dist`, `build`, `vendor`, `.venv`, `__pycache__` — always skipped) + `.loomignore` at the scope top (gitignore-style, merged on top).
+- Ignore rules in `internal/trace/ignore.go`: built-in defaults (`.git`, `node_modules`, `target`, `dist`, `build`, `vendor`, `.venv`, `__pycache__` — always skipped, never re-includable) + `.loomignore` at the scope top (gitignore-subset, last-match-wins, merged on top), applied by the watcher walk and per event.
 
 ## Related
 

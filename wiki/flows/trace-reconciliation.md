@@ -7,7 +7,7 @@ tags: [wiki, flow, trace, git]
 
 ## Summary
 
-At completion, loom computes the authoritative set of files the agent changed, combining the **git-baseline pair** with the **live fsnotify events** already recorded, keyed on path so nothing is double-counted and already-dirty files are over-attributed. This is what makes a session that outlives loom still attributable. Spec: ADR-001 §5. **Status (T8):** the pure logic — `SnapshotBaseline`, `Reconcile`, `Dedup`, `FilesChanged` in `internal/trace/git.go` — is implemented and table-tested; the watcher/recorder wiring (live fsnotify leg and its dedup against the store) is T9.
+At completion, loom computes the authoritative set of files the agent changed, combining the **git-baseline pair** with the **live fsnotify events** already recorded, keyed on path so nothing is double-counted and already-dirty files are over-attributed. This is what makes a session that outlives loom still attributable. Spec: ADR-001 §5. **Status (T9):** the pure logic — `SnapshotBaseline`, `Reconcile`, `Dedup`, `FilesChanged` in `internal/trace/git.go` — is implemented and table-tested; and the live leg — the fsnotify watcher recording live `file_change` rows, with `LiveChanges` as the dedup input — landed in T9 (`watcher.go`, `recorder.go`). Still design: the completion orchestration that wires reconcile into run close (the `session` package).
 
 ## Trigger
 

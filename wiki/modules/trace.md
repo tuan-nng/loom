@@ -9,7 +9,7 @@ tags: [wiki, module, trace]
 
 `internal/trace` records what a coding agent changed during a card session. It owns the **fsnotify watcher** (scoped to the watch scope, with ignore rules) and the **git-baseline reconciliation** that attributes file changes even when the session outlives loom. It imports `store` only (DESIGN-002 §4.2). Spec: ADR-001 §4.6, §5.
 
-**Status (T8 landed):** the git-baseline reconciliation layer is real Go source in `internal/trace/git.go` — the `Baseline`/`Change` structs, `SnapshotBaseline` (short-lived exec-git client), `Reconcile` (exec-free, table-tested path-keyed reconcile), `Dedup`, and `FilesChanged`, plus unexported porcelain/name-status parsers and `gitError` 128 classification. The fsnotify watcher (`watcher.go`) and the recorder that wires trace rows (`recorder.go`) remain planned T9.
+**Status (T9 landed):** the full recording path is real Go source. `git.go` (T8) holds the baseline/reconcile logic (`SnapshotBaseline`/`Reconcile`/`Dedup`/`FilesChanged`, porcelain/name-status parsers, `gitError` 128 classification). `recorder.go` (T9) wires the run lifecycle through the store — `StartRun`/`Watch`/`RecordChange`/`LiveChanges`/`EndRun`/`AbortRun`, with a run-scoped watcher registry (`stopWatcher` drains and unregisters). `watcher.go` (T9) walks the scope and runs the fsnotify event loop. `ignore.go` (T9) implements the built-in default dir ignores + the `.loomignore` gitignore-subset matcher. Still design: the `session` package that drives the recorder at open/close (SessionManager wiring, finalize/reconcile orchestration).
 
 ## Responsibilities
 
@@ -20,7 +20,7 @@ tags: [wiki, module, trace]
 
 ## Public API / entry points
 
-Landed in T8 (`internal/trace/git.go`):
+Landed T8 + T9 (`internal/trace`):
 
 ```go
 type Baseline struct { BaseHead, Porcelain string } // empty pair outside a git repo
@@ -31,22 +31,24 @@ func Dedup(live []Change, changes []Change) []Change
 func FilesChanged(changes []Change) int
 ```
 
-Planned T9 (recorder + watcher — design-shape only):
+Recorder + watcher (landed T9):
 
 ```go
-type Recorder struct { ... }
-func (r *Recorder) SnapshotBaseline(root string) map[string]string
-func (r *Recorder) StartRun(ctx, cardID, root string, baseline map[string]string) (runID string, err error)
-func (r *Recorder) Watch(ctx, card, root, runID string)
-func (r *Recorder) AbortRun(ctx, runID string) error
-func (r *Recorder) Finalize(ctx, runID string, baseline map[string]string) error
+func NewRecorder(db *sql.DB) *Recorder
+func (r *Recorder) StartRun(cardID, root string, baseline Baseline) (string, error) // writes trace_start, returns runID
+func (r *Recorder) Watch(runID, root string) error                                 // fsnotify + ignore rules; also rejects a duplicate watch
+func (r *Recorder) RecordChange(runID, path, operation string) error               // store-validated op; unknown/stopped run silently dropped
+func (r *Recorder) LiveChanges(runID string) ([]Change, error)                     // path-keyed dedup, sorted, store-backed
+func (r *Recorder) EndRun(runID string, durationMs, filesChanged int) error        // stop watcher, write trace_end
+func (r *Recorder) AbortRun(runID string) error                                    // stop watcher, delete the whole run
 ```
 
 ## Key files
 
 - `internal/trace/git.go` — landed T8: `Baseline`/`Change`, `SnapshotBaseline` (short-lived exec git clients, `notARepo` classification), `Reconcile` (working-tree set + committed set from injected name-status text, committed op wins, deterministic path sort), `Dedup`, `FilesChanged`
-- `internal/trace/recorder.go` — planned T9: trace_start/end wiring, `files_changed`
-- `internal/trace/watcher.go` — planned T9: fsnotify + `.loomignore` + built-in ignore defaults
+- `internal/trace/recorder.go` — landed T9: `Recorder` + run-scoped watcher registry; `StartRun`/`Watch`/`RecordChange`/`LiveChanges`/`EndRun`/`AbortRun`; `stopWatcher` drain + unregister
+- `internal/trace/watcher.go` — landed T9: per-directory fsnotify walk, event loop with stop-drain, `Create` on-the-fly dir watches, no rows for dirs/chmod
+- `internal/trace/ignore.go` — landed T9: built-in dir ignores + `.loomignore` matcher (`parseIgnorePattern`, last-match-wins)
 
 ## Dependencies
 
@@ -54,8 +56,8 @@ func (r *Recorder) Finalize(ctx, runID string, baseline map[string]string) error
 
 ## Participates in
 
-- Driven by [SessionManager.ensure](../architecture/session-model.md): baseline snapshotted **before** launch, `StartRun` called **after** the startup probe passes; `AbortRun` deletes the whole run on error (never leaves an orphaned `trace_end`).
-- `Finalize`/reconcile runs at completion, `K`, `loom card close`, done-stage move, and reconcile-on-startup.
+- Will be driven by the `session` package (planned): baseline snapshotted **before** launch, `StartRun` called **after** the startup probe passes; `AbortRun` deletes the whole run on error (never leaves an orphaned `trace_end`); `EndRun` + `Reconcile`/`Dedup` run at completion, `K`, `loom card close`, done-stage move, and reconcile-on-startup.
+- `LiveChanges` feeds `trace.Dedup` (the live leg); its unique-path count feeds `trace_end.files_changed`.
 
 ## Related
 
