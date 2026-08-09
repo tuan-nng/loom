@@ -69,6 +69,12 @@ fail startup validation (§3.2.3).
 **Acceptance.** A decision is recorded (probe transcript + verdict in
 `docs/`); the gate is either lifted-with-tests or left-failing-with-finding.
 
+**Status (2026-08-09, v1.18.15): DONE — verdict CONFIRMED** (P7/P8).
+Transcript + verdict: `docs/PROBE-full-tui.md`. The full-TUI gate is
+**lifted**: T2's `agent.Validate` accepts `interface = "full"` (no rejection)
+and T3's `full` argv path ships with a table case; the §16 canary covers both
+interfaces.
+
 ---
 
 ## Milestone 1 — Foundation
@@ -110,15 +116,16 @@ under `[claude]` is a validation error that names `model` (loud migration).
   objective / acceptance_criteria omitted when empty).
 - `PosixEscape` + `CommandLine` (§8 — quote *every* argv element; `SendKeys`
   never quoted).
-- `agent.Validate(cfg *config.Config) error`: `Default` ∈ `Known()`; and the
-  §3.2.3 **gate** — `interface = "full"` fails validation until T0 lifts it.
+- `agent.Validate(cfg *config.Config) error`: `Default` ∈ `Known()`; and
+  `interface` ∈ `{"mini","full"}` (T0 lifted the §3.2.3 gate — P7/P8 confirmed
+  full-TUI auto-submit + stays-alive; both values are accepted).
 - `agent.Card` map + tests per §16.
 
 **Acceptance.** Table tests: `BuildPrompt` omits empty sections and preserves
 verbatim content; `PosixEscape` idempotent on `'` and newlines; `CommandLine`
 escapes every element (never just the prompt); `AgentOrDefault` (NULL → default,
-explicit → card value); `Validate` rejects unknown `default` and (while gated)
-`interface = "full"` with accepted values in the message.
+explicit → card value); `Validate` rejects unknown `default` and `interface`
+outside `{"mini","full"}` with accepted values in the message.
 
 ### T3. Agent drivers — claude + opencode (`internal/agent`)
 **Spec:** DESIGN-002 §5.1, §9, §16 (unit — driver row).
@@ -134,8 +141,8 @@ explicit → card value); `Validate` rejects unknown `default` and (while gated)
   `Resolve` via `exec.LookPath(cfg.Agent.Opencode.Binary)`;
   `Launch` per §9.2 — `interface = "full"` → `--prompt` only, default `"mini"` →
   `--mini --prompt`; pass-throughs appended *after* the prompt, only when set:
-  `--model`, `--agent`, `--auto`; `SendKeys: ""`. (`"full"` path is dormant
-  while T0 gates it, but the branch must exist and be table-tested.)
+  `--model`, `--agent`, `--auto`; `SendKeys: ""`. (T0 lifted the §3.2.3 gate —
+  the `"full"` path is live; both branches are table-tested.)
 - Do **not** pass opencode session flags (`--dir`/`--title`/`-c`/`-s`/`--fork`)
   — §10.3.
 

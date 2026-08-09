@@ -60,6 +60,8 @@ below were run on this machine; the transcripts are the design evidence.
 | P4 | `opencode run --mini x` | `Error: --mini must be used without the run subcommand` — the ADR's quoted error, verbatim. |
 | P5 | `opencode run --interactive x </dev/null` | **Accepted** (exit 0, entered the split-footer REPL, `> build · deepseek-v4-flash`). **Contradicts ADR-002 §1.2**, which claims `run --interactive` is rejected. |
 | P6 | `opencode --help` / `run --help` | Top-level TUI flags: `--mini --prompt --agent --auto -m -s -c --fork`. `run` flags: positional `message`, `--interactive --dir --title --format --command`. |
+| P7 | `opencode --prompt 'Reply with exactly: OK'` (full TUI, no `--mini`) in a detached `-L loomprobe` tmux session (120x40) | **Auto-submits.** At t+5s the pane showed the submitted `Reply with exactly: OK`, the model's `OK`, the full-TUI status bar `▣ Build · DeepSeek V4 Flash · 5.4s`, and the full-TUI bottom chrome (`/mnt/data/works/loom 52.7K (5%) · $0.01  ctrl+p commands`). No Enter was sent. |
+| P8 | same session at t+30s (measured t+39.3s) | Session **still alive** after the turn; pane unchanged. The full TUI does **not** exit on idle — session-existence still means "user is in the TUI". Completion semantics (ADR-002 §4.3) hold. |
 
 ### 3.2 Consequences for the design
 
@@ -74,13 +76,14 @@ below were run on this machine; the transcripts are the design evidence.
    the interactive interface per ADR-002 §4.2); it only means the §1.2 bullet
    must be amended at adoption so implementers are not misled. A future option
    exists to offer `run --interactive` as an alternative interface.
-3. **Phase 0 full-TUI gate:** full-TUI `--prompt` auto-submit
-   (`interface = "full"`) is assumed to share mini's behavior (same
-   `route.prompt` machinery), but it is a **hard gate**, not a residual: the
-   value `"full"` must not ship until the Phase 0 probe confirms auto-submit
-   and the REPL stays alive (a prefill-only full TUI would idle detached runs
-   silently — review finding F5). Until then, `interface = "full"` fails
-   startup validation.
+3. **Phase 0 full-TUI gate: LIFTED.** Full-TUI `--prompt` auto-submit is
+   **confirmed** — P7 shows it auto-submits in the full TUI and P8 shows the TUI
+   stays alive after a turn (same `route.prompt` machinery as mini, empirically
+   verified 2026-08-09, v1.18.15; transcript: `docs/PROBE-full-tui.md`).
+   `interface = "full"` therefore no longer fails startup validation; the
+   opencode driver's `full` argv path ships. The §16 regression canary still
+   guards **both** interfaces against a future prefill-only regression (review
+   finding F5).
 
 ---
 
@@ -459,7 +462,7 @@ func (opencodeDriver) Launch(exe string, card Card, cfg *config.Config) (Session
 ```
 
 - `interface = "mini"` (default) → `["<abs-opencode>", "--mini", "--prompt", "<ctx>"]` (P1: auto-submits).
-- `interface = "full"` → `["<abs-opencode>", "--prompt", "<ctx>"]` (P6; auto-submit assumed shared — **hard-gated** on the Phase 0 full-TUI probe (§3.2.3) before this value ships; until verified, a config setting of `"full"` fails startup validation).
+- `interface = "full"` → `["<abs-opencode>", "--prompt", "<ctx>"]` (P6; auto-submit **confirmed** by the Phase 0 full-TUI probe (P7/P8, §3.2.3) — the gate is lifted and this value ships).
 - `SendKeys = ""` (P1/P2: `--prompt` auto-submits; the REPL stays alive after a turn). If a future opencode version regresses to prefill-only, flip to `"Enter"`. **Scope of the visibility guarantee:** while attached, a prefill regression is visible; `--detach` is NOT — a detached session would idle at its prompt as a live-but-empty `● running` run. The §16 auto-submit canary (post-probe `capture-pane` asserting the pane shows the model's response, not the prefilled input) makes a regression fail a test instead of silently idling detached runs (review finding F5).
 - Pass-throughs appended after the prompt, matching P6 flag names.
 
@@ -716,7 +719,7 @@ loom config                                                # prints the §11 sch
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | opencode CLI churn (`--mini`/`--prompt`/`--auto` semantics shift) | Low–Med | Pin the verified version range in `loom docs`/README; re-run the §3 probes on each opencode major bump. The `SendKeys` field absorbs a prefill-only regression. |
-| Full-TUI `--prompt` auto-submit unverified | **Gate** | `interface = "full"` is **hard-gated** on the Phase 0 full-TUI probe (§3.2.3); the value fails startup validation until auto-submit is confirmed. Not shipped unverified. |
+| Full-TUI `--prompt` auto-submit regression | Low | **Resolved (2026-08-09, v1.18.15):** Phase 0 probe confirmed auto-submit + TUI stays alive (P7/P8, §3.2.3; transcript `docs/PROBE-full-tui.md`); the gate is **lifted**. The §16 canary (post-probe `capture-pane`) fails a test if a future version regresses to prefill-only — no silent idle of a `--detach` run. |
 | opencode version regresses `--prompt` to prefill-only | Low | §16 auto-submit canary (post-probe `capture-pane` shows the model's response, not the prefilled input) fails a test instead of silently idling a `--detach` run (review finding F5). While attached it is visible; the canary covers the unattached case. |
 | opencode permission model ≠ claude | Medium | opencode permissions are config/agent-driven; "ask" rules prompt in the pane while attached; `auto_approve` passes `--auto` (§11). User-owned config, same posture as claude. |
 | opencode binary missing / too old | Low | `Resolve` fails the open with an install hint (§10.2). A launch that never gets off the ground writes **no** trace rows (probe precedes `StartRun`, §10.2) — C7 holds by construction. |
@@ -726,10 +729,9 @@ loom config                                                # prints the §11 sch
 | **ADR-002 §1.2 factual error** (`run --interactive` "rejected") | Doc | Corrected in §3.2.2; amend ADR-002 at adoption so implementers aren't misled. |
 | Mislabeled "done" (run-mode semantics) | Low (future) | Not enabled in this change (§12); when it lands, the card-detail view shows launch mode beside `●`/`◉`. |
 
-**Open questions that do not block implementation:** whether the Phase 0
-full-TUI probe confirms auto-submit (blocks `interface = "full"` only, §3.2.3);
-whether to expose `run --interactive` as a third interface option (deferred —
-ADR chose `--mini`; §12 keeps it).
+**Open questions that do not block implementation:** whether to expose
+`run --interactive` as a third interface option (deferred — ADR chose `--mini`;
+§12 keeps it).
 
 ---
 
@@ -743,7 +745,7 @@ ADR chose `--mini`; §12 keeps it).
 | **Unit — schema** | Migration up/down; `agent` default NULL; CHECK rejects unknown names; existing rows migrate NULL | `internal/store` |
 | **Integration — per driver** | Parametrized stub `claude` + stub `opencode` scripts (ADR-001 §10): `loom-<id>` session name, cwd, quoted argv visible in `capture-pane`; session-end → `trace_end`; `loom card close` kills + finalizes; git reconciliation attributes changes | `internal/session` against real `tmux` |
 | **Failure paths** | **Nonexistent binary** per driver → open fails at `Resolve` with `not found in PATH`, **no** session created, no pane to capture (assert the message; don't assert pane text); **resolved-but-runtime-failing stub** (prints to stderr, exits 1) → probe fails, session killed, **no** `trace_start` row (C7); missed-completion (<2s stub) → reconcile-on-startup finalizes exactly one `trace_end`; **post-create error** (force `StartRun` failure) → deferred `KillSession` leaves no session and no trace rows (§10.2 invariants) | `internal/session` |
-| **Regression canary** | Auto-submit still works | Post-probe `capture-pane` in the integration test asserts the first pane line is the **model's response**, not the prefilled input — a future opencode prefill-only regression fails this test instead of silently idling detached runs (review finding F5) | `internal/session` |
+| **Regression canary** | Auto-submit still works (both `mini` and `full`) | Post-probe `capture-pane` in the integration test asserts the first pane line is the **model's response**, not the prefilled input — a future opencode prefill-only regression fails this test instead of silently idling detached runs (review finding F5) | `internal/session` |
 | **TUI** | Badge rendering, `n`/`e` picker, detail field, keybindings unchanged | BubbleTea test framework |
 | **E2E** | Manual: board → card → open with claude → detach → reattach → trace on completion; same with `default = "opencode"` | Manual (coverage-bar exception per ADR-001 §10) |
 
@@ -761,7 +763,7 @@ refactor" therefore becomes "Phase 1 builds the abstraction directly".
 
 | Phase | Scope | Days |
 |-------|-------|------|
-| **0 — Feasibility** | **Done** (§3): `--mini --prompt` auto-submit (P1), REPL stays alive (P2), TTY requirement (P3), `run --mini` rejection (P4), `run --interactive` validity (P5). **Residual (gate):** full-TUI `--prompt` probe — required before `interface = "full"` can ship (§3.2.3). | 0.25 |
+| **0 — Feasibility** | **Done** (§3): `--mini --prompt` auto-submit (P1), REPL stays alive (P2), TTY requirement (P3), `run --mini` rejection (P4), `run --interactive` validity (P5), full-TUI `--prompt` auto-submit + TUI stays alive (P7/P8 — gate **lifted**, §3.2.3). | 0.25 |
 | **1 — Scaffold + store + config + agent** | go.mod, deps (BubbleTea v2.0.7, Bubbles, LipGloss, Glamour, modernc sqlite, goose v3, fsnotify — ADR-001 §2.2); `00001` + `00002` migrations; store CRUD with `Agent` column; `config` load/validate; `agent` package (Driver, registry, escape, prompt, claude/opencode drivers); store/agent/config unit tests | 2–3 |
 | **2 — SessionManager + TUI** | `tmux` wrapper; `ensure` per §10.2 (steps 1–3, 7 driver-owned); attach/kill/status/probe/reconcile unchanged; board TUI with agent badge; `n`/`e` picker; `d` detail field; trace recorder + watcher + git reconcile | 5–7 |
 | **3 — CLI + polish + verification** | `--agent` flags (add/update, `--agent=` reset, badge in list); `loom config`; failure-path + parametrized stub-driver integration tests; docs (ADR-002 → Adopted with §3.2 corrections) | 2–3 |
