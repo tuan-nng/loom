@@ -18,7 +18,7 @@ A **session** is a detached tmux session on the dedicated `-L loom` server, name
 
 ## Where it lives
 
-- `session.Tmux` wrapper (`session/tmux.go`) ships as real Go source (T10): `New(server)` resolves tmux and gates ≥ 3.x, and `SessionName(id) = "loom-" + id` rejects `:`; `session.Manager` (`manager.go`) is still planned (T11).
+- `session.Tmux` wrapper (`session/tmux.go`) ships as real Go source (T10): `New(server)` resolves tmux and gates ≥ 3.x, and `SessionName(id) = "loom-" + id` rejects `:`; `Sessions` (T11) adds live-state listing for the status markers. `session.Manager` (`manager.go`) now ships too (T11): driver-aware `Ensure`, `Attach`, `Kill`, one-tick `Status`, and `ReconcileOnStartup`.
 - Managed lifecycle in [Session Model](../architecture/session-model.md).
 
 ## Related

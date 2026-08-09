@@ -35,11 +35,12 @@ sequenceDiagram
 
 ## Key components
 
-- **`SessionManager.ensure`** — create-or-reuse the card's session; the only lifecycle method that touches the driver (DESIGN-002 §10.2). The run is **recorded after the probe passes**, and any session it created is killed on every post-creation error path.
+- **`SessionManager.Ensure`** — create-or-reuse the card's session; the only lifecycle method that touches the driver (DESIGN-002 §10.2). The run is **recorded after the probe passes**, and any session it created is killed on every post-creation error path. **Implemented (T11).**
+- **`completeRun`** — the single shared finalize path (used by `Status`, `Kill`, `ReconcileOnStartup`): git-reconcile the run against its stored baseline, emit missing `file_change` rows, write `trace_end` with `files_changed = unique(live ∪ missing)`. Startup-reconciled runs record `durationMs=0` (no start timestamp).
 - **Startup probe** — ~500ms re-check that `loom-<id>` still exists; a session already gone means the command never launched (bad binary, bad cwd). The `trace_start` row is **deleted, never finalized** (ADR-001 §4.1 step 1; DESIGN-002 §10.2 invariant 2).
-- **2s poll** — `tmux -L loom list-sessions` drives per-card running / attached markers. This is a liveness *indicator*, not the completion guarantee.
-- **Reconcile-on-startup** — on every startup, runs with a `trace_start` and no `trace_end` whose session is absent are finalized. This is the correctness backstop for runs that end between polls or while loom is not running (ADR-001 §4.1 step 5).
-- **tmux client wrapper** (`session/tmux.go`) — thin, testable wrapper: `NewSession`, `HasSession`, `CapturePane`, `SendKeys`, `KillSession`, `ListSessions` (DESIGN-002 §10.1). **Implemented (T10):** `New(server)` resolves the binary once and gates tmux ≥ 3.x with an install hint; every failure surfaces as a typed `tmuxError`, and `MissingServer` flags the cold/missing-server state. The SessionManager that drives this lifecycle is still planned (T11).
+- **2s poll** — `tmux -L loom list-sessions` drives per-card running / attached markers. This is a liveness *indicator*, not the completion guarantee. **Implemented (T11)** as one synchronous `Status` tick (`Sessions` → `SessionStatus{Running, Attached}`); the caller owns cadence (TUI 2s poll, one-shot CLI).
+- **Reconcile-on-startup** — on every startup, runs with a `trace_start` and no `trace_end` whose session is absent are finalized. This is the correctness backstop for runs that end between polls or while loom is not running (ADR-001 §4.1 step 5). **Implemented (T11)**; reconciled runs record `durationMs=0`.
+- **tmux client wrapper** (`session/tmux.go`) — thin, testable wrapper: `NewSession`, `HasSession`, `CapturePane`, `SendKeys`, `KillSession`, `ListSessions`, `Sessions` (DESIGN-002 §10.1). **Implemented (T10 + T11):** `New(server)` resolves the binary once and gates tmux ≥ 3.x with an install hint; every failure surfaces as a typed `tmuxError`, and `MissingServer` flags the cold/missing-server state. `Sessions` (T11) lists live sessions with their attached flag via one `-F '#{session_name}\t#{session_attached}'` call for the `Status` markers.
 
 ## Design decisions
 
