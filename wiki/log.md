@@ -41,3 +41,10 @@ Append-only audit trail. Add one dated entry per generation or refresh run, reco
 - source_commit: 4fdc915 (was f729599)
 - Coverage: T4 store migrations + pragmas landed as real Go source since the last stamp — `internal/store` store.go (`RegisterConnectionHook` per-connection pragmas, `Open(path) (*sql.DB, error)`, `migrateUp`) + `migrate/` (`embed.FS`, `00001_initial.sql` full §3.3 schema + `ui_state` + Down, `00002_card_agent.sql`); CRUD/reorder/trace lifecycle remain planned (T5–T7); deps now pin `modernc.org/sqlite v1.33.1` (v1.33.0 retracted) + `pressly/goose v3.21.0`; refreshed the store module page, the implementation-state framing in Overview / Architecture Overview / Data Model, and the change-the-schema pragma gotcha
 - Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [Data Model](./architecture/data-model.md), [store](./modules/store.md), [Change the schema](./guides/change-the-schema.md)
+
+## 2026-08-09: refresh
+
+- Profile: internal/standard
+- source_commit: a390749 (was 4fdc915)
+- Coverage: T5 store kanban CRUD landed as real Go source since the last stamp — `internal/store` workspaces.go/boards.go/columns.go/codebases.go (entity CRUD, `CreateBoard` seeds the 5 default columns atomically via a shared `execer`, `CreateColumn` appends at max+1000), ui_state.go (single-row get/set), init.go (`InitWorkspace`, idempotent keyed on root_path), ids.go (`NewID()` 16 crypto/rand bytes → 32 hex); cards.go reorder + traces.go lifecycle remain planned (T6–T7); refreshed the store module page (full public API), and the implementation-state framing in Overview / Architecture Overview / Data Model
+- Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [Data Model](./architecture/data-model.md), [store](./modules/store.md)
