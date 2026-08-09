@@ -13,7 +13,7 @@ Add a new coding agent (e.g. `aider`) as a first-class loom agent driver, with t
 
 1. **Implement the driver** in `internal/agent/<name>.go` (DESIGN-002 §4.2): `Name()`, `Resolve(cfg)` (return `exec.LookPath(cfg.Agent.<X>.Binary)`), `LaunchMode()` (Interactive unless it supports autonomous run), `Launch(exe, card, cfg)` returning `SessionSpec{Argv, SendKeys}`.
 2. **Add config** in `internal/config`: a `<X>Config{Binary, Model, ...}` block + fields in `AgentConfig`, plus the defaults in `Default()` and config-local validation.
-3. **Register** in the registry map in `agent/driver.go` (`"<name>"` → driver) so `Known()`/`IsKnown()`/`Get` include it.
+3. **Register** by adding `func init() { drivers["<name>"] = <name>Driver{} }` in the driver's own file — the `claude`/`opencode` drivers follow this self-registration pattern (T3), and `driver.go`'s map literal stays untouched. `Known()`/`IsKnown()`/`Get` then include it.
 4. **Add validation** — if the agent name is user-facing in config, ensure `Agent.Default` ∈ `Known()` (this is why `agent.Validate(cfg)` exists — the cross-package check can't live in `config`, C8).
 5. **Prompt/quoting come free** — `BuildPrompt` and `PosixEscape`/`CommandLine` are shared; only add pass-through flags if the agent needs them.
 6. **Tests** — add table cases to the argv unit tests (positional vs flag-based prompt), a `Resolve` test, and a parametrized stub-agent integration case in `internal/session` (ADR-001 §10 / ADR-002 §10).

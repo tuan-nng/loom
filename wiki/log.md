@@ -27,3 +27,10 @@ Append-only audit trail. Add one dated entry per generation or refresh run, reco
 - source_commit: e2ebff6 (was 724b0dd)
 - Coverage: T2 agent contract landed as real Go source since the last stamp — `internal/agent` (Driver/LaunchMode/SessionSpec, registry mechanism, Card+AgentOrDefault, BuildPrompt, PosixEscape/CommandLine, agent.Validate); refreshed the agent module page and the config+agent/planned framing in Overview and Architecture Overview; claude/opencode drivers remain T3 (registry empty)
 - Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [agent](./modules/agent.md)
+
+## 2026-08-09: refresh
+
+- Profile: internal/standard
+- source_commit: f729599 (was e2ebff6)
+- Coverage: T3 claude + opencode drivers landed as real Go source since the last stamp — `internal/agent` claude.go/opencode.go (argv builders per DESIGN-002 §9.1/§9.2, `init()` self-registration into the registry, PATH-independent Resolve); refreshed the agent module page (registry now populated), the implementation-state framing in Overview / Architecture Overview / Agent Abstraction, and corrected the registration step in the add-a-new-agent guide (init() in the driver file, not the driver.go map literal); claude/opencode drivers no longer design
+- Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [Agent Abstraction](./architecture/agent-abstraction.md), [agent](./modules/agent.md), [Add a new agent](./guides/add-a-new-agent.md)

@@ -26,9 +26,9 @@ flowchart LR
 
 - **`Driver` interface** — `Name() string`, `Resolve(cfg *config.Config) (string, error)` (absolute path via `exec.LookPath` in loom's env), `LaunchMode() LaunchMode`, `Launch(exe string, card Card, cfg *config.Config) (SessionSpec, error)`. Two signature corrections over the ADR-as-drawn: `Resolve` takes cfg (binary is per-agent config), `Launch` takes `exe` (avoids a double `LookPath`) — DESIGN-002 §5.2.
 - **`SessionSpec`** — `{ Argv []string; SendKeys string }`. `SendKeys` is an optional tmux key name sent **after** the probe passes (default `""` for both shipped drivers — opencode's `--prompt` auto-submits, verified).
-- **Registry** — static map; `Get(name)`, `Known()`, `IsKnown(name)`. No dynamic registration in v0.1.x.
-- **`claudeDriver`** — argv `[abs-claude, context]` (positional prompt), optional `--model`. `LaunchModeInteractive`. This is ADR-001's behavior moved behind the driver, unchanged.
-- **`opencodeDriver`** — `interface = "mini"` (default) → `[abs-opencode, --mini, --prompt, ctx]`; `interface = "full"` → `[abs-opencode, --prompt, ctx]`. Pass-throughs: `model` → `--model`, `opencode_agent` → `--agent`, `auto_approve` → `--auto`. `LaunchModeInteractive`.
+- **Registry** — static map; `Get(name)`, `Known()`, `IsKnown(name)`. No dynamic registration in v0.1.x; both shipped drivers self-register via `init()` in their own files (T3), leaving the map literal in `driver.go` untouched.
+- **`claudeDriver`** — argv `[abs-claude, context]` (positional prompt), optional `--model` after the prompt. `LaunchModeInteractive`. This is ADR-001's behavior moved behind the driver, unchanged. **Implemented (T3).**
+- **`opencodeDriver`** — `interface = "mini"` (default) → `[abs-opencode, --mini, --prompt, ctx]`; `interface = "full"` → `[abs-opencode, --prompt, ctx]`. Pass-throughs appended after the prompt only when set: `model` → `--model`, `opencode_agent` → `--agent`, `auto_approve` → `--auto`. `LaunchModeInteractive`. **Implemented (T3).**
 - **`agent.Card` projection** — `agent` stays store-free; `session` maps `store.Card` → `agent.Card` with the agent already resolved via `Card.AgentOrDefault(cfg)` (NULL → `[agent] default`, late-bound at launch time — DESIGN-002 §6).
 - **`agent.Validate(cfg)`** — cross-package check that `Agent.Default` is a known agent, called from `main` at startup. Lives in `agent` (which imports `config`) to avoid the `config → agent` cycle (C8).
 
