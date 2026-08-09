@@ -18,7 +18,7 @@ A **session** is a detached tmux session on the dedicated `-L loom` server, name
 
 ## Where it lives
 
-- `session.Tmux` wrapper + `session.Manager` (`session/tmux.go`, `manager.go`); `SessionName(id) = "loom-" + id` (DESIGN-002 §10.1).
+- `session.Tmux` wrapper (`session/tmux.go`) ships as real Go source (T10): `New(server)` resolves tmux and gates ≥ 3.x, and `SessionName(id) = "loom-" + id` rejects `:`; `session.Manager` (`manager.go`) is still planned (T11).
 - Managed lifecycle in [Session Model](../architecture/session-model.md).
 
 ## Related

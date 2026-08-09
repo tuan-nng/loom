@@ -39,7 +39,7 @@ sequenceDiagram
 - **Startup probe** — ~500ms re-check that `loom-<id>` still exists; a session already gone means the command never launched (bad binary, bad cwd). The `trace_start` row is **deleted, never finalized** (ADR-001 §4.1 step 1; DESIGN-002 §10.2 invariant 2).
 - **2s poll** — `tmux -L loom list-sessions` drives per-card running / attached markers. This is a liveness *indicator*, not the completion guarantee.
 - **Reconcile-on-startup** — on every startup, runs with a `trace_start` and no `trace_end` whose session is absent are finalized. This is the correctness backstop for runs that end between polls or while loom is not running (ADR-001 §4.1 step 5).
-- **tmux client wrapper** (`session/tmux.go`) — thin, testable wrapper: `NewSession`, `HasSession`, `CapturePane`, `SendKeys`, `KillSession`, `ListSessions` (DESIGN-002 §10.1).
+- **tmux client wrapper** (`session/tmux.go`) — thin, testable wrapper: `NewSession`, `HasSession`, `CapturePane`, `SendKeys`, `KillSession`, `ListSessions` (DESIGN-002 §10.1). **Implemented (T10):** `New(server)` resolves the binary once and gates tmux ≥ 3.x with an install hint; every failure surfaces as a typed `tmuxError`, and `MissingServer` flags the cold/missing-server state. The SessionManager that drives this lifecycle is still planned (T11).
 
 ## Design decisions
 
