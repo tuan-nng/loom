@@ -7,7 +7,7 @@ tags: [wiki, module, store, sqlite]
 
 ## Summary
 
-`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). T4 landed the **schema + connection layer**: `Open(path)` opens the database with the mandated per-connection pragmas and runs the goose migrations from an `embed.FS` (`migrate/00001_initial.sql` = the full ADR-001 §3.3 schema incl. `ui_state`, `migrate/00002_card_agent.sql` = the ADR-002 §6 `cards.agent` migration). **T5 landed the kanban CRUD** for the four domain entities plus the `ui_state` single-row get/set and the `loom init` helper — all package-level functions over a `*sql.DB`, sharing one `NewID()` generator. **T6 landed the card CRUD + reorder** (`cards.go`) — create / partial-update / move / list / delete with anchored `(prev+next)/2` repositioning and the pre-write whole-column renumber. The trace run lifecycle remains **planned** (T7).
+`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). T4 landed the **schema + connection layer**: `Open(path)` opens the database with the mandated per-connection pragmas and runs the goose migrations from an `embed.FS` (`migrate/00001_initial.sql` = the full ADR-001 §3.3 schema incl. `ui_state`, `migrate/00002_card_agent.sql` = the ADR-002 §6 `cards.agent` migration). **T5 landed the kanban CRUD** for the four domain entities plus the `ui_state` single-row get/set and the `loom init` helper — all package-level functions over a `*sql.DB`, sharing one `NewID()` generator. **T6 landed the card CRUD + reorder** (`cards.go`) — create / partial-update / move / list / delete with anchored `(prev+next)/2` repositioning and the pre-write whole-column renumber. **T7 landed the trace run lifecycle** (`traces.go`) — `StartRun`/`RecordChange`/`EndRun`/`OpenRuns`/`AbortRun` over the §3.3 `traces` schema, with the store owning every `data_json` shape.
 
 ## Responsibilities
 
@@ -30,7 +30,12 @@ tags: [wiki, module, store, sqlite]
 - **`Card` + `AgentOrDefault`** — nullable fields are `*string` (NULL carries meaning); `AgentOrDefault(def)` resolves launch agent: explicit card value wins, else the config default (DESIGN-002 §6).
 - **MoveCard** — the **only writer of `column_id`**, keeping `board_id`/`workspace_id` in sync (ADR-001 §3.3). `(nil, nil)` appends at `max(position)+1000`; two anchors land the card at `(prev+next)/2`; when the gap is exhausted (`next-prev <= 1`) the whole column renumbers to `0,1000,2000,…` in display order **before** the midpoint is computed — one transaction, so no reader sees the intermediate renumber (ADR-001 §3.4). Exactly one anchor → `ErrPartialAnchors`; a target column on another board → `ErrCrossBoardMove`.
 
-**Planned (T7):** trace run lifecycle (`StartRun`/`AbortRun` — delete whole run, open-run lookup).
+**Implemented (T7):**
+
+- **Run lifecycle** — `traces.go`: `StartRun(db, cardID, runID, baseHead, porcelain)` writes the `trace_start` row, serializing the git baseline pair into `data_json` and omitting the `git` key when `baseHead` is empty (not inside a git repo); `RecordChange`/`EndRun` first resolve `card_id` from the run's `trace_start` inside a transaction (missing run → `sql.ErrNoRows` — the store never records into a run that wasn't started), then insert a `file_change`/`trace_end`. `AbortRun` deletes the **whole run** (`DELETE FROM traces WHERE run_id = ?`) — never an orphaned `trace_end` or `file_change` (DESIGN-002 §10.2 invariant 4); idempotent.
+- **`record_change` operations validated in the store** — `created|modified|deleted` (the only enforcement point: the operation lives in opaque `data_json`, unreachable by a schema CHECK); exposed as constants `OpCreated`/`OpModified`/`OpDeleted`.
+- **`OpenRuns`** — every un-finalized run (`trace_start` with no `trace_end`), `ORDER BY seq`, parsed into `OpenRun{CardID, RunID, BaseHead, Porcelain}` — the input to reconcile-on-startup (ADR-001 §4.1 step 5). A row with corrupt `data_json` surfaces as an error, never silently-empty fields.
+- **Ordering is `seq` only** — never timestamps; enforced by the AUTOINCREMENT key, which survives `VACUUM`.
 
 ## Public API / entry points
 
@@ -80,6 +85,14 @@ func DeleteCard(db *sql.DB, id string) error
 func ListCardsByBoard(db *sql.DB, boardID string) ([]Card, error)
 func ListCardsByColumn(db *sql.DB, columnID string) ([]Card, error)
 func MoveCard(db *sql.DB, cardID, toColumnID string, beforeID, afterID *string) error
+
+// trace run lifecycle (ADR-001 §3.3, §5; DESIGN-002 §10.2)
+const OpCreated, OpModified, OpDeleted string
+func StartRun(db *sql.DB, cardID, runID, baseHead, porcelain string) error
+func RecordChange(db *sql.DB, runID, path, operation string) error
+func EndRun(db *sql.DB, runID string, durationMs, filesChanged int) error
+func OpenRuns(db *sql.DB) ([]OpenRun, error)
+func AbortRun(db *sql.DB, runID string) error
 ```
 
 - `Open` opens `"sqlite"` at `path`, sets `SetMaxOpenConns(1)`, then applies the goose migrations; returns a ready `*sql.DB` with pragmas enforced on every pooled connection by the hook. Third-party errors are returned bare; `db.Close()` runs on any migration failure.
@@ -96,7 +109,7 @@ func MoveCard(db *sql.DB, cardID, toColumnID string, beforeID, afterID *string) 
 - `internal/store/ui_state.go` — `UIState` + get/set (implemented, T5)
 - `internal/store/init.go` — `InitWorkspace` (implemented, T5)
 - `internal/store/cards.go` — card CRUD + reorder (implemented, T6)
-- `internal/store/traces.go` — trace run lifecycle (planned, T7)
+- `internal/store/traces.go` — run lifecycle: `StartRun`/`RecordChange`/`EndRun`/`OpenRuns`/`AbortRun` + `data_json` shapes (implemented, T7)
 
 ## Dependencies
 
@@ -104,7 +117,7 @@ func MoveCard(db *sql.DB, cardID, toColumnID string, beforeID, afterID *string) 
 
 ## Participates in
 
-- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui` — the card CRUD/reorder API is ready for them; the trace run-lifecycle API lands in T7.
+- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui` — the card CRUD/reorder API and the trace run-lifecycle API are ready for them (the `trace` recorder in T8 is the first consumer of `StartRun`/`RecordChange`/`EndRun`/`OpenRuns`/`AbortRun`).
 - The trace run-lifecycle API (`StartRun`/`AbortRun`) is what [SessionManager.ensure](../architecture/session-model.md) uses to make a failed launch leave **no** trace row.
 
 ## Related
