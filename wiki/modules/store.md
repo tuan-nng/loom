@@ -7,44 +7,41 @@ tags: [wiki, module, store, sqlite]
 
 ## Summary
 
-`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). It opens the database with the mandated per-connection pragmas, runs goose migrations from an `embed.FS`, and owns all CRUD: workspaces, boards, columns, codebases, cards (with the `agent` column), traces (run lifecycle), and `ui_state`. The full DDL is ADR-001 §3.3 + the ADR-002 §6 `cards.agent` migration.
+`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). T4 landed the **schema + connection layer**: `Open(path)` opens the database with the mandated per-connection pragmas and runs the goose migrations from an `embed.FS` (`migrate/00001_initial.sql` = the full ADR-001 §3.3 schema incl. `ui_state`, `migrate/00002_card_agent.sql` = the ADR-002 §6 `cards.agent` migration). The kanban CRUD, card reorder, and trace run lifecycle remain **planned** (T5–T7) on top of this foundation.
 
 ## Responsibilities
 
-- Open the DB and assert pragmas on every connection: WAL, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL` — **before any query** (a missing `foreign_keys` silently inert-ifies every cascade).
-- Run goose migrations (`migrate/00001_initial.sql`, `migrate/00002_card_agent.sql`).
-- Kanban CRUD: card add/list/show/move/update/delete; enforce cross-board move rejection; keep denormalized `board_id` in sync.
-- Position/reorder with the pre-write rebalance trigger at `next - prev <= 1` (ADR-001 §3.4).
-- Trace run lifecycle: `StartRun`/`AbortRun` (delete whole run), trace event inserts, open-run lookup for reconcile.
-- Persist current workspace/board in the single-row `ui_state` table.
+**Implemented (T4):**
+
+- Open the DB and assert the four pragmas on **every physical connection** — WAL, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL` — via a `sqlite.RegisterConnectionHook` registered in `init()` (a missing `foreign_keys` silently inert-ifies every cascade, so the hook fails the connection open on any pragma error). `SetMaxOpenConns(1)` makes the store a single writer.
+- Run goose migrations idempotently via `migrateUp(db, migrate.FS)` (`-- +goose Up`/`Down` markers): `00001_initial.sql` carries the 7-table schema + its Down (reverse REFERENCES order), `00002_card_agent.sql` adds the nullable `cards.agent` CHECK and drops it on down.
+
+**Planned (T5–T7):** kanban CRUD; cross-board move rejection + `board_id`/`workspace_id` sync; position/reorder with the pre-write rebalance at `next - prev <= 1` (ADR-001 §3.4); trace run lifecycle (`StartRun`/`AbortRun` — delete whole run, open-run lookup); `ui_state` get/set.
 
 ## Public API / entry points
 
 ```go
-type Store struct { ... }
-func Open(path string) (*Store, error)
-// Workspace/Board/Column/Codebase/Card CRUD methods
-func (s *Store) MoveCard(id, targetColumnID string) error
-func (s *Store) StartRun(cardID, root string, baseline map[string]string) (runID string, err error)
-func (s *Store) AbortRun(runID string) error
-func (s *Store) RecordTraceEvent(...) error
+func Open(path string) (*sql.DB, error)
 ```
+
+- `Open` opens `"sqlite"` at `path`, sets `SetMaxOpenConns(1)`, then applies the goose migrations; returns a ready `*sql.DB` with pragmas enforced on every pooled connection by the hook. Third-party errors are returned bare; `db.Close()` runs on any migration failure.
+- `migrateUp(db *sql.DB, fsys fs.FS) error` (internal) runs the goose `Up`.
+
+A `Store` struct wrapping `*sql.DB` with the CRUD/traces methods is planned with T5–T7.
 
 ## Key files
 
-- `internal/store/store.go` — open, pragmas, migration runner
-- `internal/store/workspaces.go` `boards.go` `columns.go` `codebases.go` — CRUD
-- `internal/store/cards.go` — Card CRUD + `Agent *string` column + `AgentOrDefault`
-- `internal/store/traces.go` — trace events, run lifecycle, open-run lookup
-- `internal/store/migrate/embed.go`, `00001_initial.sql`, `00002_card_agent.sql`
+- `internal/store/store.go` — connection-hook pragmas, `Open`, `migrateUp` (implemented)
+- `internal/store/migrate/embed.go`, `00001_initial.sql`, `00002_card_agent.sql` (implemented)
+- `internal/store/workspaces.go` `boards.go` `columns.go` `codebases.go` `cards.go` `traces.go` — CRUD + trace lifecycle (planned, T5–T7)
 
 ## Dependencies
 
-- None internal (leaf). External: `modernc.org/sqlite`, pressly/goose, `embed.FS`.
+- None internal (leaf). External: `modernc.org/sqlite v1.33.1` (the C1 pin was v1.33.0, retracted by the maintainer — it dropped the external `modernc.org/libc` and broke clients; v1.33.1 restores it), `github.com/pressly/goose/v3 v3.21.0`, stdlib `embed.FS`.
 
 ## Participates in
 
-- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui`.
+- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui` once their store-facing APIs land (T5–T7).
 - The trace run-lifecycle API (`StartRun`/`AbortRun`) is what [SessionManager.ensure](../architecture/session-model.md) uses to make a failed launch leave **no** trace row.
 
 ## Related

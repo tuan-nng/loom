@@ -24,7 +24,7 @@ Safely add or modify a table/column in loom's SQLite schema (e.g. the ADR-002 `c
 
 ## Gotchas
 
-- **Never drop `PRAGMA foreign_keys = ON`** — without it every `ON DELETE CASCADE` is inert (silent orphaned rows). Assert it per connection, with a test (ADR-001 §3.3).
+- **Never drop `PRAGMA foreign_keys = ON`** — without it every `ON DELETE CASCADE` is inert (silent orphaned rows). Assert it per connection, with a test (ADR-001 §3.3). Implemented: `store.go` `init()` registers a `sqlite.RegisterConnectionHook` re-issuing all four pragmas on every physical connection, with `TestOpenPragmas` asserting them on a fresh connection.
 - **Don't renumber the ordering key** — a bare rowid (not `AUTOINCREMENT`) is renumbered by `VACUUM`; `traces.seq` must stay `AUTOINCREMENT`.
 - **Keep `cards.board_id`/`workspace_id` in sync** — `MoveCard` is the only writer of `column_id` and must update the denormalized ids; cross-board moves are rejected.
 - **v0.2 cut content stays cut** — `notes`/`artifacts` tables return in v0.2, not in v0.1 (ADR-001 §9).

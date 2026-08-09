@@ -7,7 +7,7 @@ tags: [wiki, architecture, schema, sqlite]
 
 ## Summary
 
-Loom persists to a single SQLite database (`modernc.org/sqlite`, pure Go, no CGO) with **6 domain tables** (`workspaces`, `boards`, `columns`, `codebases`, `cards`, `traces`) plus a single-row `ui_state` table. Full DDL in ADR-001 §3.3. `notes`/`artifacts` were cut from v0.1 and return in v0.2 (ADR-001 §9). Migrations run via pressly/goose with `embed.FS` (ADR-001 §2.2).
+Loom persists to a single SQLite database (`modernc.org/sqlite`, pure Go, no CGO) with **6 domain tables** (`workspaces`, `boards`, `columns`, `codebases`, `cards`, `traces`) plus a single-row `ui_state` table. Full DDL in ADR-001 §3.3. `notes`/`artifacts` were cut from v0.1 and return in v0.2 (ADR-001 §9). The schema ships as real Go source since T4 — `internal/store/migrate/00001_initial.sql` (+ `00002_card_agent.sql`), enforced by `internal/store`'s per-connection pragma hook (ADR-001 §2.2, §3.3); the CRUD layer on top is planned (T5–T7).
 
 ## Diagram
 

@@ -34,3 +34,10 @@ Append-only audit trail. Add one dated entry per generation or refresh run, reco
 - source_commit: f729599 (was e2ebff6)
 - Coverage: T3 claude + opencode drivers landed as real Go source since the last stamp — `internal/agent` claude.go/opencode.go (argv builders per DESIGN-002 §9.1/§9.2, `init()` self-registration into the registry, PATH-independent Resolve); refreshed the agent module page (registry now populated), the implementation-state framing in Overview / Architecture Overview / Agent Abstraction, and corrected the registration step in the add-a-new-agent guide (init() in the driver file, not the driver.go map literal); claude/opencode drivers no longer design
 - Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [Agent Abstraction](./architecture/agent-abstraction.md), [agent](./modules/agent.md), [Add a new agent](./guides/add-a-new-agent.md)
+
+## 2026-08-09: refresh
+
+- Profile: internal/standard
+- source_commit: 4fdc915 (was f729599)
+- Coverage: T4 store migrations + pragmas landed as real Go source since the last stamp — `internal/store` store.go (`RegisterConnectionHook` per-connection pragmas, `Open(path) (*sql.DB, error)`, `migrateUp`) + `migrate/` (`embed.FS`, `00001_initial.sql` full §3.3 schema + `ui_state` + Down, `00002_card_agent.sql`); CRUD/reorder/trace lifecycle remain planned (T5–T7); deps now pin `modernc.org/sqlite v1.33.1` (v1.33.0 retracted) + `pressly/goose v3.21.0`; refreshed the store module page, the implementation-state framing in Overview / Architecture Overview / Data Model, and the change-the-schema pragma gotcha
+- Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [Data Model](./architecture/data-model.md), [store](./modules/store.md), [Change the schema](./guides/change-the-schema.md)
