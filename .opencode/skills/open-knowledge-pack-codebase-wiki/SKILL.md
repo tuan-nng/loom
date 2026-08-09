@@ -1,16 +1,31 @@
 ---
 name: open-knowledge-pack-codebase-wiki
-version: "0.18.0"
-description: "How to work in a Codebase Wiki project (the `codebase-wiki` starter pack): an agent-authored, source-grounded wiki of the surrounding codebase. Read when the project has a `wiki/` knowledge base with `architecture/`, `modules/`, `flows/`, `concepts/`, and `guides/` sections plus `wiki/OVERVIEW.md`. Carries the per-folder rules and freshness + log discipline, summarizes the audience/depth knobs and source-reference convention, and points to the `workflow({ kind: 'wiki' })` guide for the full generate/refresh procedure. Complements the platform `open-knowledge` skill; does not replace it."
-compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires OpenKnowledge MCP server. Installed project-local by `ok seed --pack codebase-wiki`."
-metadata:
-  pack: "codebase-wiki"
-  author: "Inkeep"
-  repository: "https://github.com/inkeep/open-knowledge"
+description: "How to work in a Codebase Wiki project (the `codebase-wiki`
+  starter pack): an agent-authored, source-grounded wiki of the surrounding
+  codebase. Load it BOTH when working in `wiki/` (generate/refresh, per-folder
+  rules, `workflow({ kind: 'wiki' })`) AND whenever the user asks questions
+  about this repo's code, design, architecture, or 'how does X work' — in Q&A
+  mode, `search` the wiki first to ground answers, then native/ci tools for
+  line-level source truth, since OK MCP does not index non-markdown source. Read
+  when the project has a `wiki/` knowledge base with `architecture/`,
+  `modules/`, `flows/`, `concepts/`, and `guides/` sections plus
+  `wiki/OVERVIEW.md`. Summarizes the audience/depth knobs, source-reference
+  convention, and freshness + log discipline. Complements the platform
+  `open-knowledge` skill; does not replace it."
 ---
 # Codebase Wiki pack — how to work here
 
 This project holds an **agent-authored wiki of a codebase** — DeepWiki, but living in the repo. A coding agent reads the source and writes a navigable, diagram-rich, source-grounded wiki as markdown under `wiki/`. It is version-controlled and diffable, private by default, human+agent co-editable, renders in OK's live preview, and doubles as durable grounding context for future agent sessions. There is no separate Q&A surface — Q&A is "the OK-grounded agent + `search`".
+
+## Q&A mode — answering questions about the code
+
+When the user asks anything about this repo's code, design, architecture, or behavior — "how does X work", "why is Y designed this way", "where do I change Z" — use this skill's wiki as grounding rather than reaching straight for the source:
+
+1. **`search` the wiki first** (e.g. `search({ query })` for module/flow/concept pages) — it carries the curated, source-grounded map of the system. Quote or link the relevant page (`./wiki/...`) when it directly answers.
+2. **Drill into source with native tools / `ci`** for line-level truth — OK MCP does not index non-markdown source, so the wiki alone is never the authority on current code.
+3. **If the wiki is silent or stale**, say so — a `workflow({ kind: 'wiki' })` refresh may be warranted *after* answering.
+
+Do not load the wiki skill for plain markdown work (that's the platform `open-knowledge` skill); do load/consult it for code questions.
 
 > This is pack guidance. The platform `open-knowledge` skill still governs every markdown operation (read/write/preview/linking/grounding). This layers the wiki workflow on top.
 
