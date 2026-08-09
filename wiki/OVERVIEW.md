@@ -2,15 +2,15 @@
 title: Codebase Wiki — Overview
 description: Home page and navigation hub for the loom codebase wiki. Loom is a CLI-native Kanban task tracker that launches coding agents (claude/opencode) in tmux sessions.
 profile: internal/standard
-source_commit: adcc17dfbd52cf0a0e570ff250792fd35ac247ad
-tags: [wiki, overview]
+source_commit: 724b0dd2847092063c28e489747d5a6a97bdbfd4
+tags: [ wiki, overview ]
 ---
 
 # Loom — Codebase Wiki
 
 **Loom** is a CLI-native Kanban task tracker with agent launch. A single Go binary shows a Kanban board in the terminal; opening a card launches that card's coding agent (**claude** or **opencode**) inside a detached tmux session on a dedicated `-L loom` server. The human stays in the loop by attaching and detaching; the board stays usable while the agent works in the background, and every session's file changes are traced to the card.
 
-This wiki describes the designed system. **The repo is docs-only today** — no source code exists yet; the canonical design lives in [ADR-001](../docs/ADR-001-loom-architecture.md) (architecture), [ADR-002](../docs/ADR-002-loom-multi-agent.md) (multi-agent support), and [DESIGN-002](../docs/DESIGN-002-loom-multi-agent.md) (implementation blueprint), with an execution backlog in [TASKS](../docs/TASKS-loom-v0.1.md). The wiki captures the same system as navigable, diagram-rich, cross-linked pages.
+This wiki describes the designed system. **The repo is now partially implemented**: the T1 [config package](./modules/config.md) ships as real Go source (`internal/config`, module `loom`, go 1.23); the rest of the codebase is still design. The canonical design lives in [ADR-001](../docs/ADR-001-loom-architecture.md) (architecture), [ADR-002](../docs/ADR-002-loom-multi-agent.md) (multi-agent support), and [DESIGN-002](../docs/DESIGN-002-loom-multi-agent.md) (implementation blueprint), with an execution backlog in [TASKS](../docs/TASKS-loom-v0.1.md). The wiki captures the same system as navigable, diagram-rich, cross-linked pages.
 
 ## What this is
 
@@ -59,7 +59,7 @@ Layered view: **Terminal (BubbleTea)** → **Application Core** (`BoardService`,
 - [Agent Abstraction](./architecture/agent-abstraction.md) — `AgentDriver` interface, claude/opencode drivers, launch semantics
 - [Trace Recording](./architecture/trace-recording.md) — fsnotify watcher, ignore rules, git-baseline reconciliation
 
-### Modules (planned Go packages, DESIGN-002 §4.2)
+### Modules (Go packages — config implemented, rest planned per DESIGN-002 §4.2)
 
 - [config](./modules/config.md) · [agent](./modules/agent.md) · [store](./modules/store.md) · [trace](./modules/trace.md) · [session](./modules/session.md) · [board](./modules/board.md) · [cli](./modules/cli.md) · [tui](./modules/tui.md)
 
@@ -89,4 +89,4 @@ Layered view: **Terminal (BubbleTea)** → **Application Core** (`BoardService`,
 
 ## Freshness
 
-Generated 2026-08-09 against `source_commit: adcc17df`. See [log](./log.md) for the audit trail.
+Generated 2026-08-09 against `source_commit: adcc17df`; refreshed 2026-08-09 against `source_commit: 724b0dd` (T1 config package). See [log](./log.md) for the audit trail.

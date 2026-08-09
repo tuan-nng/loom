@@ -7,7 +7,7 @@ tags: [wiki, architecture, overview]
 
 ## Summary
 
-Loom is a **CLI-native Kanban task tracker with agent launch**: a single Go binary that shows a Kanban board in the terminal, and opening a card launches that card's coding agent (Claude Code or opencode) inside a detached tmux session on a dedicated `-L loom` server. The human stays in the loop by attaching and detaching; the board stays usable while the agent works in the background. The canonical design is [ADR-001](../../docs/ADR-001-loom-architecture.md), extended for multiple agents by [ADR-002](../../docs/ADR-002-loom-multi-agent.md) and the [implementation blueprint](../../docs/DESIGN-002-loom-multi-agent.md). The repo is **docs-only today** — no source code exists yet; the wiki describes the designed system.
+Loom is a **CLI-native Kanban task tracker with agent launch**: a single Go binary that shows a Kanban board in the terminal, and opening a card launches that card's coding agent (Claude Code or opencode) inside a detached tmux session on a dedicated `-L loom` server. The human stays in the loop by attaching and detaching; the board stays usable while the agent works in the background. The canonical design is [ADR-001](../../docs/ADR-001-loom-architecture.md), extended for multiple agents by [ADR-002](../../docs/ADR-002-loom-multi-agent.md) and the [implementation blueprint](../../docs/DESIGN-002-loom-multi-agent.md). The repo is **partially implemented**: the T1 [config](../modules/config.md) package is real Go source; the remainder is still design — the wiki describes the designed system.
 
 ## Diagram
 
