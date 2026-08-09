@@ -7,7 +7,7 @@ tags: [wiki, module, agent]
 
 ## Summary
 
-`internal/agent` is a **leaf** (imports `config` only, deliberately store-free). It owns everything agent-shaped: the `Driver` interface and registry, the shared prompt builder, the POSIX argv escaper, the `agent.Card` projection, and the two shipped drivers (`claude`, `opencode`). Sessions, tracing, and the TUI never build agent commands themselves — they call the driver. Spec: ADR-002 §3–§4, DESIGN-002 §5–§9.
+The `internal/agent` package is a **leaf** (imports `config` only, deliberately store-free) and the **second implemented package** (T2, commit `e2ebff6`). It owns everything agent-shaped: the `Driver` interface and registry, the shared prompt builder, the POSIX argv escaper, and the `agent.Card` projection. The two shipped drivers (`claude`, `opencode`) are the next task (T3) — the registry is intentionally empty until they register. Sessions, tracing, and the TUI never build agent commands themselves — they call the driver. Spec: ADR-002 §3–§4, DESIGN-002 §5–§9.
 
 ## Responsibilities
 
@@ -34,13 +34,20 @@ func Validate(cfg *config.Config) error
 
 ## Key files
 
-- `internal/agent/driver.go` — Driver, LaunchMode, SessionSpec, registry
-- `internal/agent/card.go` — `agent.Card` projection + `AgentOrDefault` (late-bound NULL resolution)
-- `internal/agent/prompt.go` — `BuildPrompt` (ADR-001 §4.5 template)
-- `internal/agent/escape.go` — `PosixEscape`, `CommandLine`
-- `internal/agent/claude.go` — claudeDriver (ADR-001 behavior, moved behind the driver)
-- `internal/agent/opencode.go` — opencodeDriver (`--mini`/`--prompt` default, `full` optional, pass-throughs)
-- `internal/agent/agent_test.go` — table-driven argv/quoting/AgentOrDefault tests
+- [../../internal/agent/driver.go](../../internal/agent/driver.go) — Driver, LaunchMode, SessionSpec, registry mechanism
+- [../../internal/agent/card.go](../../internal/agent/card.go) — `agent.Card` projection + `AgentOrDefault` (late-bound NULL resolution)
+- [../../internal/agent/prompt.go](../../internal/agent/prompt.go) — `BuildPrompt` (ADR-001 §4.5 template)
+- [../../internal/agent/escape.go](../../internal/agent/escape.go) — `PosixEscape`, `CommandLine`
+- [../../internal/agent/agent_test.go](../../internal/agent/agent_test.go) — table-driven quoting/AgentOrDefault/Validate/registry tests
+- `internal/agent/claude.go` — claudeDriver (ADR-001 behavior, moved behind the driver) — **T3, not yet implemented**
+- `internal/agent/opencode.go` — opencodeDriver (`--mini`/`--prompt` default, `full` optional, pass-throughs) — **T3, not yet implemented**
+
+## Implementation notes (T2, commit `e2ebff6`)
+
+- The driver contract + helpers land as real Go source: `Driver` (signatures per DESIGN-002 §5.2 — `Resolve(cfg *config.Config)`, `Launch(exe, card, cfg)`), `LaunchMode` (`interactive`/`run`), `SessionSpec{Argv, SendKeys}`, the registry mechanism (`Get`/`Known`/`IsKnown`, `Known()` sorted and non-nil), `agent.Card` + `AgentOrDefault`, `BuildPrompt` (§7), `PosixEscape`/`CommandLine` (§8), and `agent.Validate(cfg)`.
+- The production `drivers` map is **empty** until T3 registers `claudeDriver`/`opencodeDriver`. `agent.Validate` checks `interface` ∈ `{"mini", "full"}` then `Default` ∈ `Known()`; with the empty registry the default check fails on the shipped default (`claude`) until T3 — safe because no caller exists yet (validated from `main` starts in a later task).
+- Tests seed stub drivers same-package (`seedDrivers` + `t.Cleanup` restore) to exercise the registry and the accepted-values error message.
+- Verification: `go build`, `go vet`, `go test ./...` green; 100% statement coverage; 34 subtests.
 
 ## Dependencies
 
