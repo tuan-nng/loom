@@ -108,6 +108,31 @@ func SessionName(id string) string {
 	return "loom-" + id
 }
 
+// SessionState reports one live session's name and whether a client is
+// currently attached, the `◉` marker input for the board's status view
+// (ADR-001 §4.1 step 3).
+type SessionState struct {
+	Name     string
+	Attached bool
+}
+
+// Sessions lists every live session with its attached flag via a single
+// `-F '#{session_name}\t#{session_attached}'` call. A missing server or an
+// empty session list both return (nil, nil), mirroring ListSessions.
+func (t Tmux) Sessions() ([]SessionState, error) {
+	out, err := t.run("list-sessions", "-F", "#{session_name}\t#{session_attached}")
+	if err != nil {
+		if MissingServer(err) {
+			return nil, nil
+		}
+		if te, ok := err.(*tmuxError); ok && te.code == 1 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return parseSessionStates(out), nil
+}
+
 // tmuxError carries tmux's exit code and stderr so callers can classify a
 // missing-server failure without string-matching a generic exec error.
 type tmuxError struct {
@@ -150,6 +175,18 @@ func parseSessionNames(out string) []string {
 		}
 	}
 	return names
+}
+
+func parseSessionStates(out string) []SessionState {
+	var states []SessionState
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		states = append(states, SessionState{Name: fields[0], Attached: len(fields) > 1 && fields[1] == "1"})
+	}
+	return states
 }
 
 func tmuxGE3(v string) bool {

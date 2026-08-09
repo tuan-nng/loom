@@ -64,7 +64,7 @@ func SnapshotBaseline(root string) (Baseline, error) {
 // Reconcile computes the authoritative change set for a run's completion
 // (ADR-001 §5). It is exec-free: the committed set is parsed from diffOut,
 // the text of `git diff --name-status <baseHead> <currentHead>` which the
-// caller supplies (see gitDiffNameStatus).
+// caller supplies (see GitDiffNameStatus).
 //
 // The path-keyed working-tree set is the primary source: a path in the
 // completion snapshot alone is created, unless its normalized letter denotes
@@ -137,9 +137,10 @@ func FilesChanged(changes []Change) int {
 	return len(seen)
 }
 
-// gitDiffNameStatus produces the committed-set text Reconcile consumes: the
-// name-status diff between the run's base and current heads (ADR-001 §5).
-func gitDiffNameStatus(root, baseHead, head string) (string, error) {
+// GitDiffNameStatus produces the committed-set text Reconcile consumes: the
+// name-status diff between the run's base and current heads (ADR-001 §5). The
+// session manager supplies it so Reconcile stays exec-free.
+func GitDiffNameStatus(root, baseHead, head string) (string, error) {
 	return gitOut(root, "diff", "--name-status", baseHead, head)
 }
 

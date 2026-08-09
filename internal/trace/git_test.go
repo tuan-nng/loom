@@ -303,9 +303,9 @@ func TestReconcileCommittedSetEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SnapshotBaseline: %v", err)
 	}
-	diff, err := gitDiffNameStatus(dir, base.BaseHead, cur.BaseHead)
+	diff, err := GitDiffNameStatus(dir, base.BaseHead, cur.BaseHead)
 	if err != nil {
-		t.Fatalf("gitDiffNameStatus: %v", err)
+		t.Fatalf("GitDiffNameStatus: %v", err)
 	}
 	got, err := Reconcile(base, cur, diff)
 	if err != nil {
@@ -332,9 +332,9 @@ func TestReconcileRenameEndToEnd(t *testing.T) {
 	if cur.Porcelain != "" {
 		t.Fatalf("clean post-commit tree, got porcelain %q", cur.Porcelain)
 	}
-	diff, err := gitDiffNameStatus(dir, base.BaseHead, cur.BaseHead)
+	diff, err := GitDiffNameStatus(dir, base.BaseHead, cur.BaseHead)
 	if err != nil {
-		t.Fatalf("gitDiffNameStatus: %v", err)
+		t.Fatalf("GitDiffNameStatus: %v", err)
 	}
 	if !strings.Contains(diff, "R100\t") {
 		t.Fatalf("expected a rename line, got %q", diff)
