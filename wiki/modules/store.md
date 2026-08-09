@@ -7,7 +7,7 @@ tags: [wiki, module, store, sqlite]
 
 ## Summary
 
-`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). T4 landed the **schema + connection layer**: `Open(path)` opens the database with the mandated per-connection pragmas and runs the goose migrations from an `embed.FS` (`migrate/00001_initial.sql` = the full ADR-001 §3.3 schema incl. `ui_state`, `migrate/00002_card_agent.sql` = the ADR-002 §6 `cards.agent` migration). **T5 landed the kanban CRUD** for the four domain entities plus the `ui_state` single-row get/set and the `loom init` helper — all package-level functions over a `*sql.DB`, sharing one `NewID()` generator. Card reorder and the trace run lifecycle remain **planned** (T6–T7).
+`internal/store` is a **leaf** over `modernc.org/sqlite` (pure Go, no CGO). T4 landed the **schema + connection layer**: `Open(path)` opens the database with the mandated per-connection pragmas and runs the goose migrations from an `embed.FS` (`migrate/00001_initial.sql` = the full ADR-001 §3.3 schema incl. `ui_state`, `migrate/00002_card_agent.sql` = the ADR-002 §6 `cards.agent` migration). **T5 landed the kanban CRUD** for the four domain entities plus the `ui_state` single-row get/set and the `loom init` helper — all package-level functions over a `*sql.DB`, sharing one `NewID()` generator. **T6 landed the card CRUD + reorder** (`cards.go`) — create / partial-update / move / list / delete with anchored `(prev+next)/2` repositioning and the pre-write whole-column renumber. The trace run lifecycle remains **planned** (T7).
 
 ## Responsibilities
 
@@ -24,7 +24,13 @@ tags: [wiki, module, store, sqlite]
 - **`InitWorkspace`** — the `loom init` helper (ADR-001 §6): workspace named after the dir + board `"Board"` + the five columns, all in one transaction; **idempotent keyed on `root_path`** — an already-registered directory returns the existing workspace untouched.
 - **`NewID()`** — the shared 16 `crypto/rand` bytes → 32 hex chars generator (ADR-001 §3.3), used by every writer. Panics only on `crypto/rand` failure (broken OS entropy, unrecoverable).
 
-**Planned (T6–T7):** card CRUD with the nullable `Agent` field + `AgentOrDefault`; cross-board move rejection + `board_id`/`workspace_id` sync; position/reorder with the pre-write rebalance at `next - prev <= 1` (ADR-001 §3.4); trace run lifecycle (`StartRun`/`AbortRun` — delete whole run, open-run lookup).
+**Implemented (T6):**
+
+- **Card CRUD** — `cards.go`: `CreateCard` appends at `max(position)+1000` in one transaction, denormalizing `board_id`/`workspace_id` off the column's board (priority defaults to `"medium"`); `UpdateCard` is a **partial** update — nil pointer = untouched, non-nil sets, and on nullable columns a non-nil `""` clears to NULL (how the CLI expresses `--agent=` reset, DESIGN-002 §13); `GetCard`/`DeleteCard`; `ListCardsByBoard`/`ListCardsByColumn` `ORDER BY position`.
+- **`Card` + `AgentOrDefault`** — nullable fields are `*string` (NULL carries meaning); `AgentOrDefault(def)` resolves launch agent: explicit card value wins, else the config default (DESIGN-002 §6).
+- **MoveCard** — the **only writer of `column_id`**, keeping `board_id`/`workspace_id` in sync (ADR-001 §3.3). `(nil, nil)` appends at `max(position)+1000`; two anchors land the card at `(prev+next)/2`; when the gap is exhausted (`next-prev <= 1`) the whole column renumbers to `0,1000,2000,…` in display order **before** the midpoint is computed — one transaction, so no reader sees the intermediate renumber (ADR-001 §3.4). Exactly one anchor → `ErrPartialAnchors`; a target column on another board → `ErrCrossBoardMove`.
+
+**Planned (T7):** trace run lifecycle (`StartRun`/`AbortRun` — delete whole run, open-run lookup).
 
 ## Public API / entry points
 
@@ -65,10 +71,20 @@ func SetUIState(db *sql.DB, lastWorkspaceID, lastBoardID *string) error
 
 // loom init helper (idempotent on root_path)
 func InitWorkspace(db *sql.DB, rootPath string) (Workspace, error)
+
+// cards (nullable fields are *string; UpdateCard is partial, "" clears a nullable col)
+func CreateCard(db *sql.DB, in CardInput) (Card, error)
+func UpdateCard(db *sql.DB, id string, u CardUpdate) (Card, error)
+func GetCard(db *sql.DB, id string) (Card, error)
+func DeleteCard(db *sql.DB, id string) error
+func ListCardsByBoard(db *sql.DB, boardID string) ([]Card, error)
+func ListCardsByColumn(db *sql.DB, columnID string) ([]Card, error)
+func MoveCard(db *sql.DB, cardID, toColumnID string, beforeID, afterID *string) error
 ```
 
 - `Open` opens `"sqlite"` at `path`, sets `SetMaxOpenConns(1)`, then applies the goose migrations; returns a ready `*sql.DB` with pragmas enforced on every pooled connection by the hook. Third-party errors are returned bare; `db.Close()` runs on any migration failure.
 - `MostRecentWorkspace`/`FirstBoard` are the store primitives behind the fallback chain (ADR-001 §6: `ui_state` → most-recent workspace → first board) — [BoardService](../modules/board.md) composes them.
+- `MoveCard` append mode is `(nil, nil)`; exactly one anchor returns [ErrPartialAnchors]() and a target column on another board returns [ErrCrossBoardMove]().
 - `IsNotFound(err)` wraps `errors.Is(err, sql.ErrNoRows)` for callers.
 
 ## Key files
@@ -79,7 +95,8 @@ func InitWorkspace(db *sql.DB, rootPath string) (Workspace, error)
 - `internal/store/workspaces.go` `boards.go` `columns.go` `codebases.go` — entity CRUD + `DefaultColumns` seed (implemented, T5)
 - `internal/store/ui_state.go` — `UIState` + get/set (implemented, T5)
 - `internal/store/init.go` — `InitWorkspace` (implemented, T5)
-- `internal/store/cards.go` `traces.go` — card reorder + trace lifecycle (planned, T6–T7)
+- `internal/store/cards.go` — card CRUD + reorder (implemented, T6)
+- `internal/store/traces.go` — trace run lifecycle (planned, T7)
 
 ## Dependencies
 
@@ -87,7 +104,7 @@ func InitWorkspace(db *sql.DB, rootPath string) (Workspace, error)
 
 ## Participates in
 
-- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui` once their store-facing APIs land (T6–T7).
+- Consumed by `trace` (recorder), `session` (manager), `board` (BoardService), `cli`, `tui` — the card CRUD/reorder API is ready for them; the trace run-lifecycle API lands in T7.
 - The trace run-lifecycle API (`StartRun`/`AbortRun`) is what [SessionManager.ensure](../architecture/session-model.md) uses to make a failed launch leave **no** trace row.
 
 ## Related

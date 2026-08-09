@@ -2,7 +2,7 @@
 title: Codebase Wiki — Overview
 description: Home page and navigation hub for the loom codebase wiki. Loom is a CLI-native Kanban task tracker that launches coding agents (claude/opencode) in tmux sessions.
 profile: internal/standard
-source_commit: a390749
+source_commit: 9cc976a
 tags: [ wiki, overview ]
 ---
 
@@ -10,7 +10,7 @@ tags: [ wiki, overview ]
 
 **Loom** is a CLI-native Kanban task tracker with agent launch. A single Go binary shows a Kanban board in the terminal; opening a card launches that card's coding agent (**claude** or **opencode**) inside a detached tmux session on a dedicated `-L loom` server. The human stays in the loop by attaching and detaching; the board stays usable while the agent works in the background, and every session's file changes are traced to the card.
 
-This wiki describes the designed system. **The repo is now partially implemented**: the T1 [config package](./modules/config.md), the T2 [agent contract](./modules/agent.md) (driver interface, registry, prompt builder, quoting — `internal/agent`, module `loom`, go 1.23), the T3 [claude + opencode drivers](./modules/agent.md) (argv builders, `init()` registration), and the T4 [store migrations + pragmas](./modules/store.md) (`internal/store` — `Open`/`migrateUp`, the per-connection pragma hook, goose migrations `00001_initial.sql`/`00002_card_agent.sql`) plus the T5 [store kanban CRUD](./modules/store.md) (workspaces/boards/columns/codebases, `ui_state`, `loom init` — `NewID()`, `CreateWorkspace`/`CreateBoard`/`InitWorkspace`, single-row `SetUIState`) ship as real Go source; the store's card reorder + trace lifecycle, session, TUI, and CLI are still design. The canonical design lives in [ADR-001](../docs/ADR-001-loom-architecture.md) (architecture), [ADR-002](../docs/ADR-002-loom-multi-agent.md) (multi-agent support), and [DESIGN-002](../docs/DESIGN-002-loom-multi-agent.md) (implementation blueprint), with an execution backlog in [TASKS](../docs/TASKS-loom-v0.1.md). The wiki captures the same system as navigable, diagram-rich, cross-linked pages.
+This wiki describes the designed system. **The repo is now partially implemented**: the T1 [config package](./modules/config.md), the T2 [agent contract](./modules/agent.md) (driver interface, registry, prompt builder, quoting — `internal/agent`, module `loom`, go 1.23), the T3 [claude + opencode drivers](./modules/agent.md) (argv builders, `init()` registration), and the T4 [store migrations + pragmas](./modules/store.md) (`internal/store` — `Open`/`migrateUp`, the per-connection pragma hook, goose migrations `00001_initial.sql`/`00002_card_agent.sql`) plus the T5 [store kanban CRUD](./modules/store.md) (workspaces/boards/columns/codebases, `ui_state`, `loom init` — `NewID()`, `CreateWorkspace`/`CreateBoard`/`InitWorkspace`, single-row `SetUIState`) and the T6 [store card CRUD + reorder](./modules/store.md) (`CreateCard`/`UpdateCard`/`MoveCard`/`DeleteCard`, anchored `(prev+next)/2` repositioning with a pre-write whole-column renumber) ship as real Go source; the store's trace lifecycle, session, TUI, and CLI are still design. The canonical design lives in [ADR-001](../docs/ADR-001-loom-architecture.md) (architecture), [ADR-002](../docs/ADR-002-loom-multi-agent.md) (multi-agent support), and [DESIGN-002](../docs/DESIGN-002-loom-multi-agent.md) (implementation blueprint), with an execution backlog in [TASKS](../docs/TASKS-loom-v0.1.md). The wiki captures the same system as navigable, diagram-rich, cross-linked pages.
 
 ## What this is
 
@@ -59,7 +59,7 @@ Layered view: **Terminal (BubbleTea)** → **Application Core** (`BoardService`,
 - [Agent Abstraction](./architecture/agent-abstraction.md) — `AgentDriver` interface, claude/opencode drivers, launch semantics
 - [Trace Recording](./architecture/trace-recording.md) — fsnotify watcher, ignore rules, git-baseline reconciliation
 
-### Modules (Go packages — config, agent contract, claude/opencode drivers, store migrations + pragmas + kanban CRUD implemented, rest planned per DESIGN-002 §4.2)
+### Modules (Go packages — config, agent contract, claude/opencode drivers, store schema + kanban + card CRUD implemented, rest planned per DESIGN-002 §4.2)
 
 - [config](./modules/config.md) · [agent](./modules/agent.md) · [store](./modules/store.md) · [trace](./modules/trace.md) · [session](./modules/session.md) · [board](./modules/board.md) · [cli](./modules/cli.md) · [tui](./modules/tui.md)
 
@@ -89,4 +89,4 @@ Layered view: **Terminal (BubbleTea)** → **Application Core** (`BoardService`,
 
 ## Freshness
 
-Generated 2026-08-09 against `source_commit: adcc17df`; refreshed 2026-08-09 against `source_commit: 724b0dd` (T1 config package), `e2ebff6` (T2 agent contract), `f729599` (T3 claude + opencode drivers), and `4fdc915` (T4 store migrations + pragmas), and `a390749` (T5 store kanban CRUD). See [log](./log.md) for the audit trail.
+Generated 2026-08-09 against `source_commit: adcc17df`; refreshed 2026-08-09 against `source_commit: 724b0dd` (T1 config package), `e2ebff6` (T2 agent contract), `f729599` (T3 claude + opencode drivers), and `4fdc915` (T4 store migrations + pragmas), and `a390749` (T5 store kanban CRUD), and `9cc976a` (T6 store cards CRUD + reorder). See [log](./log.md) for the audit trail.
