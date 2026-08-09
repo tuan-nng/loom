@@ -261,3 +261,155 @@ func TestRegistryNilValue(t *testing.T) {
 		t.Error("Get(\"broken\") = nil error, want error")
 	}
 }
+
+func TestClaudeResolve(t *testing.T) {
+	tests := []struct {
+		name    string
+		binary  string
+		want    string
+		wantErr string
+	}{
+		{"found", "/bin/sh", "/bin/sh", ""},
+		{"missing", "/nonexistent/loom-claude-xyz", "", "no such file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Agent: config.AgentConfig{Claude: config.ClaudeConfig{Binary: tt.binary}}}
+			d := claudeDriver{}
+			got, err := d.Resolve(cfg)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Resolve() = nil error, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Resolve() error %q missing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve() = error %v, want nil", err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeResolve(t *testing.T) {
+	tests := []struct {
+		name    string
+		binary  string
+		want    string
+		wantErr string
+	}{
+		{"found", "/bin/sh", "/bin/sh", ""},
+		{"missing", "/nonexistent/loom-opencode-xyz", "", "no such file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Agent: config.AgentConfig{Opencode: config.OpencodeConfig{Binary: tt.binary}}}
+			d := opencodeDriver{}
+			got, err := d.Resolve(cfg)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Resolve() = nil error, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Resolve() error %q missing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve() = error %v, want nil", err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeLaunch(t *testing.T) {
+	card := Card{Title: "T", Description: "D", Objective: "O", AcceptanceCriteria: "A"}
+	prompt := "T\n\n## Description\nD\n\n## Objective\nO\n\n## Acceptance Criteria\nA"
+	const exe = "/abs/claude"
+	tests := []struct {
+		name  string
+		model string
+		want  []string
+	}{
+		{"positional prompt", "", []string{exe, prompt}},
+		{"model appended after prompt", "opus", []string{exe, prompt, "--model", "opus"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Agent: config.AgentConfig{Claude: config.ClaudeConfig{Model: tt.model}}}
+			d := claudeDriver{}
+			got, err := d.Launch(exe, card, cfg)
+			if err != nil {
+				t.Fatalf("Launch() = error %v, want nil", err)
+			}
+			if !reflect.DeepEqual(got.Argv, tt.want) {
+				t.Errorf("Launch() Argv = %q, want %q", got.Argv, tt.want)
+			}
+			if got.SendKeys != "" {
+				t.Errorf("Launch() SendKeys = %q, want \"\"", got.SendKeys)
+			}
+		})
+	}
+}
+
+func TestOpencodeLaunch(t *testing.T) {
+	card := Card{Title: "T", Description: "D", Objective: "O", AcceptanceCriteria: "A"}
+	prompt := "T\n\n## Description\nD\n\n## Objective\nO\n\n## Acceptance Criteria\nA"
+	const exe = "/abs/opencode"
+	tests := []struct {
+		name string
+		cfg  config.OpencodeConfig
+		want []string
+	}{
+		{"mini default branch", config.OpencodeConfig{}, []string{exe, "--mini", "--prompt", prompt}},
+		{"mini explicit", config.OpencodeConfig{Interface: "mini"}, []string{exe, "--mini", "--prompt", prompt}},
+		{"full", config.OpencodeConfig{Interface: "full"}, []string{exe, "--prompt", prompt}},
+		{"mini all pass-throughs", config.OpencodeConfig{Interface: "mini", Model: "m", OpencodeAgent: "a", AutoApprove: true}, []string{exe, "--mini", "--prompt", prompt, "--model", "m", "--agent", "a", "--auto"}},
+		{"full all pass-throughs", config.OpencodeConfig{Interface: "full", Model: "m", OpencodeAgent: "a", AutoApprove: true}, []string{exe, "--prompt", prompt, "--model", "m", "--agent", "a", "--auto"}},
+		{"only agent set", config.OpencodeConfig{Interface: "full", OpencodeAgent: "build"}, []string{exe, "--prompt", prompt, "--agent", "build"}},
+		{"only auto set", config.OpencodeConfig{Interface: "mini", AutoApprove: true}, []string{exe, "--mini", "--prompt", prompt, "--auto"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Agent: config.AgentConfig{Opencode: tt.cfg}}
+			d := opencodeDriver{}
+			got, err := d.Launch(exe, card, cfg)
+			if err != nil {
+				t.Fatalf("Launch() = error %v, want nil", err)
+			}
+			if !reflect.DeepEqual(got.Argv, tt.want) {
+				t.Errorf("Launch() Argv = %q, want %q", got.Argv, tt.want)
+			}
+			if got.SendKeys != "" {
+				t.Errorf("Launch() SendKeys = %q, want \"\"", got.SendKeys)
+			}
+		})
+	}
+}
+
+func TestKnownRealDrivers(t *testing.T) {
+	want := []string{"claude", "opencode"}
+	if got := Known(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Known() = %v, want %v", got, want)
+	}
+	for _, name := range want {
+		d, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q) = error %v, want nil", name, err)
+		}
+		if d.Name() != name {
+			t.Errorf("Get(%q).Name() = %q, want %q", name, d.Name(), name)
+		}
+		if d.LaunchMode() != LaunchModeInteractive {
+			t.Errorf("Get(%q).LaunchMode() = %q, want %q", name, d.LaunchMode(), LaunchModeInteractive)
+		}
+	}
+}
