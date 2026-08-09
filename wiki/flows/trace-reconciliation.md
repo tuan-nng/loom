@@ -7,7 +7,7 @@ tags: [wiki, flow, trace, git]
 
 ## Summary
 
-At completion, loom computes the authoritative set of files the agent changed, combining the **git-baseline pair** with the **live fsnotify events** already recorded, keyed on path so nothing is double-counted and already-dirty files are over-attributed. This is what makes a session that outlives loom still attributable. Spec: ADR-001 §5.
+At completion, loom computes the authoritative set of files the agent changed, combining the **git-baseline pair** with the **live fsnotify events** already recorded, keyed on path so nothing is double-counted and already-dirty files are over-attributed. This is what makes a session that outlives loom still attributable. Spec: ADR-001 §5. **Status (T8):** the pure logic — `SnapshotBaseline`, `Reconcile`, `Dedup`, `FilesChanged` in `internal/trace/git.go` — is implemented and table-tested; the watcher/recorder wiring (live fsnotify leg and its dedup against the store) is T9.
 
 ## Trigger
 
@@ -17,8 +17,8 @@ At completion, loom computes the authoritative set of files the agent changed, c
 
 1. **Baseline pair** (from `trace_start`): `git rev-parse HEAD` + `git status --porcelain`, parsed into a `path → status-letter` map.
 2. **Completion pair**: take a second porcelain snapshot (+ HEAD).
-3. **Working-tree set** — path in completion map and either (a) absent from baseline (newly dirtied/untracked) or (b) present with a different status letter; plus any baseline path absent from completion (staged/committed/reverted) as `modified`. Already-dirty paths with an identical letter are **ambiguous** and included as `modified` — deliberately biased toward over-attribution.
-4. **Committed set** — if HEAD moved, `git diff --name-status <base_head> HEAD` contributes paths (`A`→created, `M`→modified, `D`→deleted, `R`→old deleted + new created).
+3. **Working-tree set** — path in completion map and either (a) absent from baseline (newly dirtied/untracked, emitted `created` unless the status letter denotes deletion) or (b) present with a different status letter; plus any baseline path absent from completion (staged/committed/reverted) as `modified`. Already-dirty paths with an identical letter are **ambiguous** and included as `modified` — deliberately biased toward over-attribution.
+4. **Committed set** — if HEAD moved, `git diff --name-status <base_head> HEAD` contributes paths (`A`→created, `M`→modified, `D`→deleted, `T`→modified, `R`→source deleted + destination created). Precedence: on a path present in both sets, the committed operation wins.
 5. **Union + dedup** — emit a `file_change` row only for paths fsnotify did not already record; `trace_end.files_changed` = unique paths across both.
 
 ## Failure modes

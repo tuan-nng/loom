@@ -17,7 +17,8 @@ tags: [wiki, concept, trace, git]
 
 ## Where it lives
 
-- `internal/trace/git.go` (porcelain/path-keyed reconcile) — DESIGN-002 §4.2.
+- `internal/trace/git.go` (porcelain/path-keyed reconcile) — DESIGN-002 §4.2. **Landed T8:** `Baseline`/`Change`, `SnapshotBaseline(root)` (pure exec-git; non-repo → empty pair, nil error), `Reconcile(baseline, current, diffOut)` (exec-free — the committed-set text is injected; committed op wins on conflict; output sorted by path), `Dedup(live, changes)`, `FilesChanged(changes)` — table-tested in git_test.go.
+- The fsnotify watcher and the recorder that wires the deduped rows into the store are T9.
 - Runs at completion, `K`/`close`, done-stage move, and reconcile-on-startup.
 - Documented limitations: non-git watch scope → fsnotify-only fidelity; already-dirty files are attributed to the run whether or not touched.
 
