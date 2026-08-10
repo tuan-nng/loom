@@ -37,6 +37,10 @@ tags: [wiki, module, store, sqlite]
 - **`OpenRuns`** — every un-finalized run (`trace_start` with no `trace_end`), `ORDER BY seq`, parsed into `OpenRun{CardID, RunID, BaseHead, Porcelain}` — the input to reconcile-on-startup (ADR-001 §4.1 step 5). A row with corrupt `data_json` surfaces as an error, never silently-empty fields.
 - **Ordering is `seq` only** — never timestamps; enforced by the AUTOINCREMENT key, which survives `VACUUM`.
 
+**Implemented (T13):**
+
+- **`RecentRuns(db, limit)`** — the `limit` most-recently-ended runs (`trace_end` rows JOIN `cards` for the title), `ORDER BY t.seq DESC`, parsed into `RecentRun{CardID, Title, DurationMs, FilesChanged}`. Corrupt `data_json` surfaces as an error; `limit <= 0` returns `(nil, nil)`. Feeds `loom status`'s recent-runs section (ADR-001 §6).
+
 ## Public API / entry points
 
 ```go
@@ -93,6 +97,7 @@ func RecordChange(db *sql.DB, runID, path, operation string) error
 func EndRun(db *sql.DB, runID string, durationMs, filesChanged int) error
 func OpenRuns(db *sql.DB) ([]OpenRun, error)
 func AbortRun(db *sql.DB, runID string) error
+func RecentRuns(db *sql.DB, limit int) ([]RecentRun, error) // newest-ended first, ORDER BY seq (T13, feeds `loom status`)
 ```
 
 - `Open` opens `"sqlite"` at `path`, sets `SetMaxOpenConns(1)`, then applies the goose migrations; returns a ready `*sql.DB` with pragmas enforced on every pooled connection by the hook. Third-party errors are returned bare; `db.Close()` runs on any migration failure.

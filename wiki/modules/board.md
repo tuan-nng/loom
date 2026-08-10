@@ -61,6 +61,7 @@ func (s *Service) ReconcileOnStartup(ctx) error
 
 // Selection resolution
 func (s *Service) ResolveSelection() (store.Workspace, store.Board, error) // ErrNotInitialized = "run loom init"
+func (s *Service) ResolveWorkspace() (store.Workspace, error) // workspace-only §6 fallback; no board required (T13)
 ```
 
 ## Key files
