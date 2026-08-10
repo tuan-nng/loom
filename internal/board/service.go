@@ -364,6 +364,22 @@ func (s *Service) ResolveSelection() (store.Workspace, store.Board, error) {
 	return ws, b, nil
 }
 
+// ResolveWorkspace returns just the current workspace via the same §6 fallback
+// chain, without requiring a board to exist. Workspace-scoped commands
+// (board create, codebase add) need only the workspace, so a boardless
+// workspace must not block them (ADR-001 §6).
+func (s *Service) ResolveWorkspace() (store.Workspace, error) {
+	st, err := store.GetUIState(s.db)
+	if err != nil {
+		return store.Workspace{}, fmt.Errorf("board: %w", err)
+	}
+	ws, err := s.resolveWorkspace(st)
+	if err != nil {
+		return store.Workspace{}, err
+	}
+	return ws, nil
+}
+
 func (s *Service) resolveWorkspace(st store.UIState) (store.Workspace, error) {
 	if st.LastWorkspaceID != nil {
 		ws, err := store.GetWorkspace(s.db, *st.LastWorkspaceID)

@@ -210,3 +210,56 @@ func AbortRun(db *sql.DB, runID string) error {
 	_, err := db.Exec("DELETE FROM traces WHERE run_id = ?", runID)
 	return err
 }
+
+// RecentRun is one finalized run as shown in `loom status`: the card title
+// plus the run's duration and files-changed totals (ADR-001 §6).
+type RecentRun struct {
+	CardID       string
+	Title        string
+	DurationMs   int
+	FilesChanged int
+}
+
+// RecentRuns returns the limit most-recently ended runs, newest first. The
+// card_id is denormalized onto trace_end, so no trace_start join is needed;
+// cards cascade with their traces, so the JOIN can never miss. Ordering is by
+// seq, the only ordering key (ADR-001 §3.3). limit <= 0 returns (nil, nil).
+// Corrupt trace_end data_json surfaces as an error rather than silent zeros.
+func RecentRuns(db *sql.DB, limit int) ([]RecentRun, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(
+		"SELECT t.card_id, c.title, t.data_json FROM traces t JOIN cards c ON c.id = t.card_id WHERE t.event_type = 'trace_end' ORDER BY t.seq DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []RecentRun
+	for rows.Next() {
+		r, err := scanRecentRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+func scanRecentRun(row rowScanner) (RecentRun, error) {
+	var r RecentRun
+	var data string
+	if err := row.Scan(&r.CardID, &r.Title, &data); err != nil {
+		return RecentRun{}, err
+	}
+	var end traceEndData
+	if err := json.Unmarshal([]byte(data), &end); err != nil {
+		return RecentRun{}, err
+	}
+	r.DurationMs = end.DurationMs
+	r.FilesChanged = end.FilesChanged
+	return r, nil
+}

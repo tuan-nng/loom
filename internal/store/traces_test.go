@@ -451,3 +451,86 @@ func TestOpenRunsCorruptDataJSON(t *testing.T) {
 		t.Error("OpenRuns with corrupt data_json succeeded, want error")
 	}
 }
+
+func TestRecentRunsNewestFirst(t *testing.T) {
+	db, cardID, _ := newTraceRun(t)
+	older := NewID()
+	if err := StartRun(db, cardID, older, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, older, 1200, 3); err != nil {
+		t.Fatal(err)
+	}
+	newer := NewID()
+	if err := StartRun(db, cardID, newer, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, newer, 30000, 8); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RecentRuns(db, 5)
+	if err != nil {
+		t.Fatalf("RecentRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("recent runs = %d, want 2", len(runs))
+	}
+	if runs[0].Title != "Trace Card" || runs[0].DurationMs != 30000 || runs[0].FilesChanged != 8 {
+		t.Errorf("runs[0] = %+v, want newest run first", runs[0])
+	}
+	if runs[1].DurationMs != 1200 || runs[1].FilesChanged != 3 {
+		t.Errorf("runs[1] = %+v", runs[1])
+	}
+}
+
+func TestRecentRunsLimit(t *testing.T) {
+	db, cardID, _ := newTraceRun(t)
+	for i := 0; i < 3; i++ {
+		runID := NewID()
+		if err := StartRun(db, cardID, runID, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := EndRun(db, runID, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs, err := RecentRuns(db, 2)
+	if err != nil {
+		t.Fatalf("RecentRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("recent runs = %d, want 2 (limited)", len(runs))
+	}
+}
+
+func TestRecentRunsEmptyAndZeroLimit(t *testing.T) {
+	db, _, _ := newTraceRun(t)
+	runs, err := RecentRuns(db, 5)
+	if err != nil {
+		t.Fatalf("RecentRuns: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("recent runs = %d, want 0 (no trace_end yet)", len(runs))
+	}
+	runs, err = RecentRuns(db, 0)
+	if err != nil {
+		t.Fatalf("RecentRuns(0): %v", err)
+	}
+	if runs != nil {
+		t.Fatalf("RecentRuns(0) = %v, want nil", runs)
+	}
+}
+
+func TestRecentRunsCorruptDataJSON(t *testing.T) {
+	db, cardID, _ := newTraceRun(t)
+	if _, err := db.Exec(
+		"INSERT INTO traces (id, card_id, run_id, event_type, data_json) VALUES (?, ?, ?, 'trace_end', 'not-json')",
+		NewID(), cardID, NewID(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecentRuns(db, 5); err == nil {
+		t.Error("RecentRuns with corrupt trace_end data_json succeeded, want error")
+	}
+}
