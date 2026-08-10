@@ -21,8 +21,9 @@ import (
 //	go build -ldflags "-X loom/internal/cli.Version=v0.1.0"
 var Version = "dev"
 
-// helpText mirrors the ADR-001 §6 surface. card/attach/sessions are listed for
-// completeness; their handlers are stubs until T14/T15.
+// helpText mirrors the ADR-001 §6 surface plus DESIGN-002 §13's --agent
+// additions. attach/sessions/card open/close are listed for completeness;
+// their handlers are stubs until T15.
 const helpText = `usage: loom <command> [args]
 
 commands:
@@ -51,13 +52,15 @@ commands:
   loom card add <title> [--description <text>] [--objective <text>]
       [--acceptance-criteria <text>] [--priority <low|medium|high>]
       [--labels a,b] [--codebase <path>] [--board <name>] [--column <name>]
+      [--agent <name>]
   loom card list [--board <name>] [--column <name>] [--search <q>]
   loom card show <id>
   loom card move <id> <column>
   loom card open <id> [--detach]
   loom card close <id>
   loom card update <id> [--title <text>] [--description <text>]
-      [--priority <p>] [--codebase <path>] [--board <name>] [--column <name>]
+      [--objective <text>] [--acceptance-criteria <text>]
+      [--priority <p>] [--labels a,b] [--codebase <path>] [--agent <name>]
   loom card delete <id>
 
   loom attach <id>
@@ -99,7 +102,16 @@ func rootCommands() map[string]*command {
 			"list":   {usage: "loom column list [--board <name>]", run: runColumnList},
 			"delete": {usage: "loom column delete <name> [--board <name>]", run: runColumnDelete},
 		}},
-		"card":     {usage: "loom card <add|list|show|move|open|close|update|delete>", run: stubNotBuilt},
+		"card": {usage: "loom card <add|list|show|move|open|close|update|delete>", sub: map[string]*command{
+			"add":    {usage: "loom card add <title> [--description <text>] [--objective <text>] [--acceptance-criteria <text>] [--priority <low|medium|high>] [--labels a,b] [--codebase <path>] [--board <name>] [--column <name>] [--agent <name>]", run: runCardAdd},
+			"update": {usage: "loom card update <id> [--title <text>] [--description <text>] [--objective <text>] [--acceptance-criteria <text>] [--priority <p>] [--labels a,b] [--codebase <path>] [--agent <name>]", run: runCardUpdate},
+			"list":   {usage: "loom card list [--board <name>] [--column <name>] [--search <q>]", run: runCardList},
+			"show":   {usage: "loom card show <id>", run: runCardShow},
+			"move":   {usage: "loom card move <id> <column>", run: runCardMove},
+			"delete": {usage: "loom card delete <id>", run: runCardDelete},
+			"open":   {usage: "loom card open <id> [--detach]", run: stubNotBuilt},
+			"close":  {usage: "loom card close <id>", run: stubNotBuilt},
+		}},
 		"attach":   {usage: "loom attach <id>", run: stubNotBuilt},
 		"sessions": {usage: "loom sessions", run: stubNotBuilt},
 	}
