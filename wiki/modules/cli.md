@@ -1,5 +1,5 @@
 ---
-description: The subcommand router and stdlib-flag command surface — the scriptable half of loom (CLI/TUI parity), landed as real Go source (T13 router, T14 card subtree).
+description: The subcommand router and stdlib-flag command surface — the scriptable half of loom (CLI/TUI parity), landed as real Go source (T13 router, T14 card subtree, T15 session commands).
 tags:
   - wiki
   - module
@@ -13,7 +13,7 @@ type: module
 
 ## Responsibilities
 
-- Route subcommands against the ADR-001 §6 command table: `init`, `config`, `status`, `version`, `help`, `workspace` (list/create/switch/codebase add/list), `board` (list/create/show/delete), `column` (add `--stage`/list/delete), `card` (add/update/list/show/move/delete — T14; `open`/`close` stay stubbed for T15, as do `attach`/`sessions`) — stubbed leaves answer with an honest "not implemented in this build (planned)" error.
+- Route subcommands against the ADR-001 §6 command table: `init`, `config`, `status`, `version`, `help`, `workspace` (list/create/switch/codebase add/list), `board` (list/create/show/delete), `column` (add `--stage`/list/delete), `card` (add/update/list/show/move/delete — T14) plus the T15 session surface: `card open`/`card close`/`attach`/`sessions`. No stubbed leaves remain — every command line in the §6 table is real.
 - Wire the composition root: `config.Load()` → `agent.Validate` → `MkdirAll(db dir)` → `store.Open` → a **lazy session proxy** → `board.NewService`, so store-only commands never require `tmux` on PATH.
 - `loom status` renders a deterministic `key: value` line stream (workspace/root/board, columns with card counts, session markers `●`/`◉`, recent runs), running reconcile-on-startup first and **degrading to a board summary** when tmux is unavailable.
 - `loom config` prints the **effective** loaded config as TOML (BurntSushi `toml.NewEncoder`, no `omitempty` — zero values are meaningful and the output round-trips).
@@ -39,7 +39,7 @@ type sessionManager interface {
 }
 ```
 
-Handlers are unexported `run*(a *App, args []string) error`: `runInit`, `runConfig`, `runStatus`, `runVersion`, `runHelp`, `runWorkspaceList/Create/Switch`, `runCodebaseAdd/List`, `runBoardList/Create/Show/Delete`, `runColumnAdd/List/Delete`, `runCardAdd/Update/List/Show/Move/Delete`, `stubNotBuilt`.
+Handlers are unexported `run*(a *App, args []string) error`: `runInit`, `runConfig`, `runStatus`, `runVersion`, `runHelp`, `runWorkspaceList/Create/Switch`, `runCodebaseAdd/List`, `runBoardList/Create/Show/Delete`, `runColumnAdd/List/Delete`, `runCardAdd/Update/List/Show/Move/Delete`, `runCardOpen/Close`, `runAttach`, `runSessions`.
 
 ## Card command invariants
 
@@ -48,16 +48,25 @@ Handlers are unexported `run*(a *App, args []string) error`: `runInit`, `runConf
 - `--agent` (add) is validated against `agent.Known()` and rejects with the accepted list rendered by `acceptedAgents()`; `card list`/`show` derive the badge/label from `Card.AgentOrDefault(a.cfg.Agent.Default)` so NULL-agent cards never crash rendering.
 - `card move` targets the column inside the card's own board (ADR-001; `ErrCrossBoardMove` unreachable through this CLI path), reusing `findBoard`/`findColumn` name resolution and the `board: %w` error convention.
 
+## Session command invariants
+
+- `card open <id>` **ensures** (never spawns a second) and, unless `--detach`, attaches — `--detach` is the first bool flag in the codebase (goes through `reorderFlags`). Open is loud about failures: its lazy materialization of the session proxy is the tmux gate, so a missing tmux hard-fails rather than degrading.
+- `card close <id>` is a non-interactive kill + finalize; killing an already-absent session is a no-op (`manager.go:243-265`), so closing a never-opened card succeeds. Both open/close echo `opened card %s (%s)` / `closed card %s (%s)` from an upfront `GetCard`.
+- `attach <id>` is **pure attach**: the card must already have a live session, else the manager's `session: card <id> has no live session` error surfaces (exit 1). No success output — tmux's attach-session client owns the terminal.
+- `sessions` is read-only: it reuses status's `renderSessions` verbatim (`●`/`◉` markers can never drift), runs `ReconcileOnStartup` first, and — like `loom status` — degrades with `notice: tmux unavailable: ...; no sessions to show` to stderr at exit 0 instead of failing hard. It calls `probe()` before `svc` work so a missing tmux never even opens the store.
+- All four go through [BoardService](../modules/board.md) (`OpenCard`/`CloseCard`/`Attach`/`SessionStatus`), never the raw session proxy — echoing the card-handler convention that the CLI is a thin argument parser over the service facade.
+
 ## Key files
 
 - `internal/cli/root.go` — the `command` table (groups have `sub`, leaves have `run`, mirroring §6), `App`/`newApp`, `Main` bootstrap + `finish` (exit-code mapping), `parseFlags`/`expectArgs`, and the `reorderFlags` helper that moves value-taking flags ahead of positionals (`column add <name> --stage X` is §6 order, which stdlib flag stops at otherwise). `-h`/`--help` route to stdout, exit 0.
 - `internal/cli/commands.go` — workspace/board/column/codebase handlers + `boardOf`/`findWorkspace`/`findBoard`/`findColumn` name resolution (names are the human surface; IDs are opaque, ADR-001 §3.3). `--stage` validated against the CHECK set up front, defaulting to `todo`.
 - `internal/cli/card.go` — the T14 card subtree: `runCardAdd/Update/List/Show/Move/Delete` plus the `columnOf`, `findCodebase`, `filterCards`, `agentBadge`, `acceptedAgents`, `derefStr` helpers. `findCodebase` resolves a `--codebase <path>` against the workspace's registered codebases by absolute path.
+- `internal/cli/session.go` — the T15 session subtree: `runCardOpen`/`runCardClose`/`runAttach`/`runSessions`, each routing through [BoardService](../modules/board.md)'s session actions with an upfront `GetCard`. The lazy [session proxy](../modules/session.md) makes `card open`'s tmux gate — a missing tmux fails open loudly; `sessions` is the read-only probe-first counterpart that degrades.
 - `internal/cli/lazy.go` — `lazySession`: defers `session.New`+`NewManager` to the first session-touching call and **caches success or failure** under a mutex. Store-only commands never touch tmux; `status` calls `probe()` and degrades on error (the cached error embeds tmux's install hint); T15 command failures surface the same error for free.
 - `internal/cli/status.go` — `runStatus` + renderers; `sessionRow` sorted by (title, card) so same-title sessions stay deterministic.
 - `internal/cli/config.go` — `runConfig` → `toml.NewEncoder(a.out).Encode(a.cfg)`.
 - `cmd/loom/main.go` — the 5-line entry point: `os.Exit(cli.Main(os.Args[1:]))`.
-- Tests: `root_test.go`, `commands` flows in `root_test.go`, `status_test.go`, `config_test.go`, `lazy_test.go`, `card_test.go` (T14 acceptance: add/update/list/show/move/delete round-trips, `--agent=` reset + re-default on config change, invalid-agent rejection, NULL-vs-explicit badge, done-stage kill on move), `main_test.go` (env-isolated `Main` flow). 80.0% cli coverage.
+- Tests: `root_test.go`, `commands` flows in `root_test.go`, `status_test.go`, `config_test.go`, `lazy_test.go`, `card_test.go` (T14 acceptance: add/update/list/show/move/delete round-trips, `--agent=` reset + re-default on config change, invalid-agent rejection, NULL-vs-explicit badge, done-stage kill on move), `session_test.go` (T15 acceptance against the `stubSess` fake: open/close/attach/sessions lifecycle — ensure vs detach vs attach dispatch, `trace_start`/end counters through the service seam, missing-card gate before the session layer, no-tmux open-fails-loud vs sessions-degrades split, deterministic `◉`/`●` ordering), `main_test.go` (env-isolated `Main` flow). 80.5% cli coverage.
 
 ## Dependencies
 

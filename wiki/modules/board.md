@@ -56,6 +56,7 @@ func (s *Service) CreateBoard(workspaceID, name string) (store.Board, error)
 // Session actions
 func (s *Service) OpenCard(ctx, cardID string, detach bool) error   // Ensure (+ Attach unless detach)
 func (s *Service) CloseCard(ctx, cardID string) error               // Kill + finalize trace
+func (s *Service) Attach(ctx, cardID string) error                  // pure attach; errors when the card has no live session
 func (s *Service) SessionStatus(ctx) (map[string]session.SessionStatus, error)
 func (s *Service) ReconcileOnStartup(ctx) error
 
