@@ -304,20 +304,6 @@ func TestRunColumnBoardFlag(t *testing.T) {
 	}
 }
 
-func TestRunStubNotBuilt(t *testing.T) {
-	// card add/update/list/show/move/delete are implemented (T14); open/close/
-	// attach/sessions remain stubs until T15.
-	for _, args := range [][]string{{"card", "open", "x"}, {"card", "close", "x"}, {"attach", "x"}, {"sessions"}} {
-		code, _, errw := runWith(t, args...)
-		if code != 1 {
-			t.Fatalf("%v stub exit = %d, want 1", args, code)
-		}
-		if !strings.Contains(errw, "not implemented") {
-			t.Errorf("%v stub stderr = %q, want 'not implemented'", args, errw)
-		}
-	}
-}
-
 func TestRunUsageErrorForBadArgs(t *testing.T) {
 	code, _, errw := runWith(t, "workspace", "create")
 	if code != 1 {

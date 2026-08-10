@@ -260,6 +260,35 @@ func TestOpenCardEnsureErrorStopsAttach(t *testing.T) {
 	}
 }
 
+func TestAttachPassthrough(t *testing.T) {
+	db := openBoardDB(t)
+	_, _, cols := seedWorkspaceBoard(t, db, "ws")
+	card := mustCard(t, db, columnWithStage(cols, "todo").ID, "Card")
+	svc, f := newService(t, db, &fakeManager{})
+
+	if err := svc.Attach(context.Background(), card.ID); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if len(f.attached) != 1 || f.attached[0].ID != card.ID {
+		t.Fatalf("Attach calls = %v, want [%s]", f.attached, card.ID)
+	}
+	if len(f.ensured) != 0 {
+		t.Fatalf("Ensure calls = %v, want none (pure attach)", f.ensured)
+	}
+}
+
+func TestAttachErrorWrapped(t *testing.T) {
+	db := openBoardDB(t)
+	_, _, cols := seedWorkspaceBoard(t, db, "ws")
+	card := mustCard(t, db, columnWithStage(cols, "todo").ID, "Card")
+	svc, _ := newService(t, db, &fakeManager{attachErr: errors.New("session: card x has no live session")})
+
+	err := svc.Attach(context.Background(), card.ID)
+	if err == nil || !strings.HasPrefix(err.Error(), "board:") || !strings.Contains(err.Error(), "has no live session") {
+		t.Fatalf("Attach err = %v, want board-wrapped attach failure", err)
+	}
+}
+
 func TestCloseCardKills(t *testing.T) {
 	db := openBoardDB(t)
 	_, _, cols := seedWorkspaceBoard(t, db, "ws")
@@ -332,6 +361,7 @@ func TestPassthroughErrorPaths(t *testing.T) {
 		{"MoveCard", func() error { _, err := svc.MoveCard(context.Background(), "nope", "nope", nil, nil); return err }},
 		{"OpenCard", func() error { return svc.OpenCard(context.Background(), "nope", false) }},
 		{"CloseCard", func() error { return svc.CloseCard(context.Background(), "nope") }},
+		{"Attach", func() error { return svc.Attach(context.Background(), "nope") }},
 	}
 	for _, tt := range getters {
 		t.Run(tt.name, func(t *testing.T) {

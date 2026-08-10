@@ -328,6 +328,21 @@ func (s *Service) CloseCard(ctx context.Context, cardID string) error {
 	return nil
 }
 
+// Attach hands the terminal to the card's live session without ensuring it
+// first (pure attach, ADR-001 §4.1 step 2): a card with no live session
+// fails loudly rather than launching — the `loom attach <id>` path,
+// distinct from OpenCard's ensure-then-attach.
+func (s *Service) Attach(ctx context.Context, cardID string) error {
+	card, err := store.GetCard(s.db, cardID)
+	if err != nil {
+		return fmt.Errorf("board: %w", err)
+	}
+	if err := s.sess.Attach(ctx, card); err != nil {
+		return fmt.Errorf("board: %w", err)
+	}
+	return nil
+}
+
 // SessionStatus returns the per-card session state (● running / ◉ attached);
 // one synchronous tick, the caller owns the cadence (TUI 2s poll, one-shot
 // CLI `loom sessions`).

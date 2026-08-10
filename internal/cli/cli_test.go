@@ -31,6 +31,8 @@ type stubSess struct {
 	statusErr      error
 	ensureErr      error
 	ensureCalls    int
+	attachErr      error
+	attachCalls    int
 	killCalls      int
 }
 
@@ -38,7 +40,10 @@ func (s *stubSess) Ensure(ctx context.Context, c store.Card) error {
 	s.ensureCalls++
 	return s.ensureErr
 }
-func (s *stubSess) Attach(ctx context.Context, c store.Card) error { return nil }
+func (s *stubSess) Attach(ctx context.Context, c store.Card) error {
+	s.attachCalls++
+	return s.attachErr
+}
 func (s *stubSess) Kill(ctx context.Context, c store.Card) error {
 	s.killCalls++
 	return nil

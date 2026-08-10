@@ -22,8 +22,7 @@ import (
 var Version = "dev"
 
 // helpText mirrors the ADR-001 §6 surface plus DESIGN-002 §13's --agent
-// additions. attach/sessions/card open/close are listed for completeness;
-// their handlers are stubs until T15.
+// additions. T15 wired the session commands (card open/close, attach, sessions).
 const helpText = `usage: loom <command> [args]
 
 commands:
@@ -68,7 +67,7 @@ commands:
 `
 
 // command is one node in the fixed ADR-001 §6 surface. Groups have sub; leaves
-// have run. Stubs (card/attach/sessions) have run that reports "not built".
+// have run.
 type command struct {
 	usage string
 	run   func(a *App, args []string) error
@@ -109,11 +108,11 @@ func rootCommands() map[string]*command {
 			"show":   {usage: "loom card show <id>", run: runCardShow},
 			"move":   {usage: "loom card move <id> <column>", run: runCardMove},
 			"delete": {usage: "loom card delete <id>", run: runCardDelete},
-			"open":   {usage: "loom card open <id> [--detach]", run: stubNotBuilt},
-			"close":  {usage: "loom card close <id>", run: stubNotBuilt},
+			"open":   {usage: "loom card open <id> [--detach]", run: runCardOpen},
+			"close":  {usage: "loom card close <id>", run: runCardClose},
 		}},
-		"attach":   {usage: "loom attach <id>", run: stubNotBuilt},
-		"sessions": {usage: "loom sessions", run: stubNotBuilt},
+		"attach":   {usage: "loom attach <id>", run: runAttach},
+		"sessions": {usage: "loom sessions", run: runSessions},
 	}
 }
 
@@ -304,12 +303,6 @@ func runHelp(a *App, args []string) error {
 		return err
 	}
 	return a.printHelp()
-}
-
-// stubNotBuilt marks the T14/T15 commands so a script sees an honest error
-// rather than a silent no-op before they land.
-func stubNotBuilt(a *App, args []string) error {
-	return fmt.Errorf("command not implemented in this build (planned)")
 }
 
 // runInit initializes loom for a directory (default cwd): a workspace named
