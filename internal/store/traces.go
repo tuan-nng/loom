@@ -290,6 +290,9 @@ type CardRun struct {
 // exactly three millisecond digits, no timezone (verified against
 // modernc.org/sqlite output, e.g. "2026-08-11T17:07:05.724"). Exported so the
 // TUI detail view renders the same wall-clock strings.
+// NOTE: Only 3-digit millisecond values are guaranteed. A future SQLite build
+// emitting 4-6 fractional digits would cause parse failure — upgrade to
+// ".000000" if that becomes the production driver.
 const TraceTimeLayout = "2006-01-02T15:04:05.000"
 
 // parseTraceTime parses a created_at string. A parse failure is house-data
