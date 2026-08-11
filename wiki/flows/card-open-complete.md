@@ -11,7 +11,7 @@ The primary loop: **board → card → agent session → trace**. Opening a card
 
 ## Trigger
 
-- `Enter` on a card in the [TUI](../modules/tui.md), or `loom card open <id>` (interactive) / `loom card open <id> --detach` (scriptable).
+- `Enter` on a card in the [TUI](../modules/tui.md) — shipped T17: ensure via `BoardService.OpenCard(ctx, id, detach=true)`, then hand the TTY to `tmux attach-session` through `tea.ExecProcess` (the board restores on detach) — or `loom card open <id>` (interactive) / `loom card open <id> --detach` (scriptable).
 
 ## Sequence diagram
 

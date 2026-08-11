@@ -9,7 +9,7 @@ type: module
 ---
 ## Summary
 
-`internal/cli` is the **non-TUI command surface** — a small stdlib-`flag` subcommand router mirroring ADR-001 §6 (no cobra; the surface is fixed and fully enumerated). It landed as real Go source in T13: `Main(args []string) int` boots config + agent-validation + store, then dispatches the workspace/board/column/init/config/status/version/help trees. `loom` alone prints help for now (the TUI it will eventually launch is T16); every state mutation is scriptable. Spec: ADR-001 §6, DESIGN-002 §13.
+`internal/cli` is the **non-TUI command surface** — a small stdlib-`flag` subcommand router mirroring ADR-001 §6 (no cobra; the surface is fixed and fully enumerated). It landed as real Go source in T13: `Main(args []string) int` boots config + agent-validation + store, then dispatches the workspace/board/column/init/config/status/version/help trees. `loom` alone takes the terminal: it routes to the board TUI on a TTY and prints help on a pipe (the T16/T17 handoff lives in `internal/cli/tui.go`, whose `tuiService` wraps [BoardService](../modules/board.md) with the config's default agent and the `tmux -L <server> attach-session -t loom-<id>` argv); every state mutation is scriptable. Spec: ADR-001 §6, DESIGN-002 §13.
 
 ## Responsibilities
 
@@ -74,7 +74,7 @@ Handlers are unexported `run*(a *App, args []string) error`: `runInit`, `runConf
 
 ## Participates in
 
-- Entry point dispatch from `cmd/loom/main.go` (TUI vs CLI; TUI is T16).
+- Entry point dispatch from `cmd/loom/main.go` (TUI vs CLI; bare `loom` on a TTY runs the T16/T17 [TUI](../modules/tui.md), routed by `internal/cli/tui.go`'s `runTUI` + `tuiService` adapter).
 - Calls [BoardService](../modules/board.md) for selection persistence, workspace/board/column CRUD, and (T14) the full card lifecycle — `card move` reuses the SAME `MoveCard` done-stage kill path the [TUI flow](../flows/card-open-complete.md) documents; the lazy [session proxy](../modules/session.md) is what [SessionManager](../modules/session.md) gets constructed through.
 - [store.RecentRuns](../modules/store.md) feeds `status`'s recent-runs section.
 

@@ -7,6 +7,13 @@ description: Append-only audit trail of wiki generation and refresh runs.
 
 Append-only audit trail. Add one dated entry per generation or refresh run, recording the profile, the `source_commit` it was anchored to, and the coverage. The codebase-wiki skill describes the entry shape.
 
+## 2026-08-11: refresh
+
+- Profile: internal/standard
+- source_commit: 1eee0fe (was 08913fd)
+- Coverage: T16/T17 TUI landed as real Go source since the last stamp — `internal/tui` (BubbleTea v2, bubbles v2, lipgloss v2; app.go/keymap.go/board.go/app_test.go): the board shell (canonical §3.5 keymap, five-column layout, navigation, quit confirm/force) plus live session control (per-card cl/oc agent badges, ●/◉ session markers on a 2s poll with re-arm, Enter = ensure + `tea.ExecProcess` tmux attach, K = kill + finalize with toast suppression). Bare `loom` on a TTY now routes to the TUI via `internal/cli/tui.go` (tuiService adapter: default agent + `tmux -L <server> attach-session` argv); v2 charm deps in go.mod. Rewrote the tui module page design placeholder as real source, updated the implementation-state framing in Overview + Architecture Overview, the bare-loom routing in the cli module page, and the Enter trigger/attach handoff in the card-open-complete flow; T18–T20 (forms, card detail, search/switch/help) remain stubbed.
+- Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [cli](./modules/cli.md), [tui](./modules/tui.md), [Card open → completion](./flows/card-open-complete.md)
+
 ## 2026-08-09: generate
 
 - Profile: internal/standard
