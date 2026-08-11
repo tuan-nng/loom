@@ -176,11 +176,11 @@ func (a *App) finish(err error) int {
 	return 1
 }
 
-// run dispatches args against the command tree. Bare `loom` prints help (the
-// TUI it will eventually launch is not built until T16).
+// run dispatches args against the command tree. Bare `loom` takes the
+// terminal: the board TUI on a TTY, help on a pipe (ADR-001 §6).
 func (a *App) run(args []string) error {
 	if len(args) == 0 {
-		return a.printHelp()
+		return runTUI(a)
 	}
 	switch args[0] {
 	case "--help", "-h", "help":

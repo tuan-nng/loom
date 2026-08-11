@@ -73,9 +73,9 @@ A CLI-native tool would serve developers who live in tmux/zellij and want a Kanb
 | Layer | Technology | Version | Rationale |
 |---|---|---|---|
 | **Language** | Go | 1.23+ | Fast compilation, excellent subprocess mgmt, BubbleTea ecosystem |
-| **TUI Framework** | BubbleTea v2 | v2.0.7 | Elm Architecture, 43.5k stars, 21k dependents, cell-based partial renderer |
-| **TUI Widgets** | Bubbles | v0.18.0 | Viewport, list, textinput, spinner, paginator, table |
-| **Styling** | Lip Gloss | v0.11.0 | CSS-like terminal styling, `JoinHorizontal`, `Width` |
+| **TUI Framework** | BubbleTea v2 | `charm.land/bubbletea/v2` v2.0.7 | Elm Architecture, 43.5k stars, 21k dependents, cell-based partial renderer |
+| **TUI Widgets** | Bubbles v2 | `charm.land/bubbles/v2` v2.1.1 | Viewport, list, textinput, spinner, paginator, table (the v2 companion to BubbleTea v2; v0.18.0 was the v1 module and cannot compile against v2 `tea` types) |
+| **Styling** | Lip Gloss v2 | `charm.land/lipgloss/v2` v2.0.5 | CSS-like terminal styling, `JoinHorizontal`, `Width` (v2 module; v0.11.0 was v1) |
 | **Markdown Rendering** | Glamour | v0.7.0 | Render markdown content in card detail view |
 | **Database** | modernc.org/sqlite | v1.33.0 | Pure-Go SQLite, no CGO, WAL mode, ~90% C speed |
 | **Migrations** | pressly/goose v3 | v3.21.0 | Embed SQL via `embed.FS`, simple migration runner |

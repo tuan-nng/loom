@@ -764,7 +764,7 @@ refactor" therefore becomes "Phase 1 builds the abstraction directly".
 | Phase | Scope | Days |
 |-------|-------|------|
 | **0 — Feasibility** | **Done** (§3): `--mini --prompt` auto-submit (P1), REPL stays alive (P2), TTY requirement (P3), `run --mini` rejection (P4), `run --interactive` validity (P5), full-TUI `--prompt` auto-submit + TUI stays alive (P7/P8 — gate **lifted**, §3.2.3). | 0.25 |
-| **1 — Scaffold + store + config + agent** | go.mod, deps (BubbleTea v2.0.7, Bubbles, LipGloss, Glamour, modernc sqlite, goose v3, fsnotify — ADR-001 §2.2); `00001` + `00002` migrations; store CRUD with `Agent` column; `config` load/validate; `agent` package (Driver, registry, escape, prompt, claude/opencode drivers); store/agent/config unit tests | 2–3 |
+| **1 — Scaffold + store + config + agent** | go.mod, deps (BubbleTea v2 `charm.land/bubbletea/v2` v2.0.7, Bubbles v2 `charm.land/bubbles/v2` v2.1.1, LipGloss v2 `charm.land/lipgloss/v2` v2.0.5, Glamour, modernc sqlite, goose v3, fsnotify — ADR-001 §2.2); `00001` + `00002` migrations; store CRUD with `Agent` column; `config` load/validate; `agent` package (Driver, registry, escape, prompt, claude/opencode drivers); store/agent/config unit tests | 2–3 |
 | **2 — SessionManager + TUI** | `tmux` wrapper; `ensure` per §10.2 (steps 1–3, 7 driver-owned); attach/kill/status/probe/reconcile unchanged; board TUI with agent badge; `n`/`e` picker; `d` detail field; trace recorder + watcher + git reconcile | 5–7 |
 | **3 — CLI + polish + verification** | `--agent` flags (add/update, `--agent=` reset, badge in list); `loom config`; failure-path + parametrized stub-driver integration tests; docs (ADR-002 → Adopted with §3.2 corrections) | 2–3 |
 

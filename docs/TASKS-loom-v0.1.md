@@ -12,9 +12,10 @@ and its Acceptance items are green. Tasks are dependency-ordered; the lanes in
 
 **Conventions every task follows:**
 - Module `loom`, Go 1.23+, layout per DESIGN-002 §4.2. No new dependencies
-  beyond the pinned set (C1): BubbleTea v2.0.7, Bubbles v0.18.0, LipGloss
-  v0.11.0, Glamour v0.7.0, modernc.org/sqlite v1.33.0, goose v3.21.0, fsnotify
-  v1.7.0.
+  beyond the pinned set (C1): BubbleTea v2 (`charm.land/bubbletea/v2`
+  v2.0.7), Bubbles v2 (`charm.land/bubbles/v2` v2.1.1), LipGloss v2
+  (`charm.land/lipgloss/v2` v2.0.5), Glamour v0.7.0, modernc.org/sqlite
+  v1.33.0, goose v3.21.0, fsnotify v1.7.0.
 - Verify with `go build ./...`, `go vet ./...`, `go test ./...`. Project
   coverage bar: 80% across unit/integration, with the explicit manual-E2E
   exception (ADR-001 §10). No linter config exists yet — `go vet` is the gate.
