@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
+	"time"
 )
 
 // File-change operations recorded in a run's file_change events (ADR-001
@@ -262,4 +265,147 @@ func scanRecentRun(row rowScanner) (RecentRun, error) {
 	r.DurationMs = end.DurationMs
 	r.FilesChanged = end.FilesChanged
 	return r, nil
+}
+
+// CardRun is one run of a card as shown in the TUI card detail view (T19):
+// the run's start/end wall-clock timestamps, the duration computed from them,
+// and the unique file paths touched during the run. StartedAt and EndedAt are
+// the raw created_at strings the DB wrote — display only, since the ordering
+// key is seq, never the timestamp (ADR-001 §3.3). EndedAt is nil exactly when
+// the run is still open (no trace_end); DurationMs is 0 in that case.
+// FilesChanged always equals len(Files): both derive from the same file_change
+// rows, so the rendered list and count cannot disagree (trace_end.files_changed
+// is read only by RecentRuns for `loom status`).
+type CardRun struct {
+	RunID        string
+	StartedAt    string
+	EndedAt      *string
+	DurationMs   int
+	Files        []string
+	FilesChanged int
+}
+
+// TraceTimeLayout is the Go layout for the created_at DEFAULT,
+// strftime('%Y-%m-%dT%H:%M:%f','now'): %f is fractional seconds SS.SSS —
+// exactly three millisecond digits, no timezone (verified against
+// modernc.org/sqlite output, e.g. "2026-08-11T17:07:05.724"). Exported so the
+// TUI detail view renders the same wall-clock strings.
+const TraceTimeLayout = "2006-01-02T15:04:05.000"
+
+// parseTraceTime parses a created_at string. A parse failure is house-data
+// corruption (programmer error) and surfaces as an error rather than a silent
+// zero timestamp (house convention).
+func parseTraceTime(s string) (time.Time, error) {
+	return time.Parse(TraceTimeLayout, s)
+}
+
+// cardRunAccum accumulates one run's events during RunsForCard's single scan.
+type cardRunAccum struct {
+	runID     string
+	startedAt string
+	endedAt   *string
+	startSeq  int64
+	files     map[string]struct{}
+}
+
+// RunsForCard returns every run of cardID, newest first — by the seq of each
+// run's trace_start, the only ordering key (ADR-001 §3.3) — each with its
+// started/ended created_at, computed duration (ended−started, ms), and the
+// unique file paths changed in the run, sorted lexicographically (mirroring
+// Recorder.LiveChanges). One scan over the card's traces, grouped in Go: the
+// query orders by (run_id, seq), served by idx_traces_card_run, so a run's
+// rows are contiguous; the map groups regardless of ordering. Every run has a
+// trace_start (RecordChange/EndRun resolve card_id from it) and it is the
+// run's first write, hence its minimum seq; a run with no trace_end is
+// returned with EndedAt nil. Corrupt data_json in any row — including
+// trace_start/trace_end, whose payloads this view does not display — and an
+// unparseable created_at surface as errors, never silent fields.
+func RunsForCard(db *sql.DB, cardID string) ([]CardRun, error) {
+	rows, err := db.Query(
+		"SELECT seq, event_type, run_id, data_json, created_at FROM traces WHERE card_id = ? ORDER BY run_id, seq",
+		cardID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byRun := make(map[string]*cardRunAccum)
+	for rows.Next() {
+		var seq int64
+		var eventType, runID, data, createdAt string
+		if err := rows.Scan(&seq, &eventType, &runID, &data, &createdAt); err != nil {
+			return nil, err
+		}
+		acc := byRun[runID]
+		if acc == nil {
+			acc = &cardRunAccum{runID: runID, files: make(map[string]struct{})}
+			byRun[runID] = acc
+		}
+		switch eventType {
+		case "trace_start":
+			var start traceStartData // validated only; the git baseline is not displayed
+			if err := json.Unmarshal([]byte(data), &start); err != nil {
+				return nil, err
+			}
+			acc.startedAt = createdAt
+			acc.startSeq = seq
+		case "file_change":
+			var fc fileChangeData
+			if err := json.Unmarshal([]byte(data), &fc); err != nil {
+				return nil, err
+			}
+			acc.files[fc.Path] = struct{}{}
+		case "trace_end":
+			var end traceEndData // validated only; duration_ms/files_changed are not read here
+			if err := json.Unmarshal([]byte(data), &end); err != nil {
+				return nil, err
+			}
+			at := createdAt
+			acc.endedAt = &at
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	accs := make([]*cardRunAccum, 0, len(byRun))
+	for _, acc := range byRun {
+		accs = append(accs, acc)
+	}
+	// Newest first by the trace_start's seq. seq is a unique AUTOINCREMENT
+	// PK, so the strict ordering can never tie.
+	sort.Slice(accs, func(i, j int) bool { return accs[i].startSeq > accs[j].startSeq })
+
+	runs := make([]CardRun, 0, len(accs))
+	for _, acc := range accs {
+		files := make([]string, 0, len(acc.files))
+		for p := range acc.files {
+			files = append(files, p)
+		}
+		sort.Strings(files) // lexicographic, mirroring Recorder.LiveChanges
+
+		var durationMs int
+		if acc.endedAt != nil {
+			started, err := parseTraceTime(acc.startedAt)
+			if err != nil {
+				return nil, fmt.Errorf("store: run %s: trace_start created_at: %w", acc.runID, err)
+			}
+			ended, err := parseTraceTime(*acc.endedAt)
+			if err != nil {
+				return nil, fmt.Errorf("store: run %s: trace_end created_at: %w", acc.runID, err)
+			}
+			durationMs = int(ended.Sub(started) / time.Millisecond)
+		}
+
+		runs = append(runs, CardRun{
+			RunID:        acc.runID,
+			StartedAt:    acc.startedAt,
+			EndedAt:      acc.endedAt,
+			DurationMs:   durationMs,
+			Files:        files,
+			FilesChanged: len(files),
+		})
+	}
+	return runs, nil
 }

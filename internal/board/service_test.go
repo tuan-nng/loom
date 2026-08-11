@@ -673,3 +673,45 @@ func TestCRUDPassthroughs(t *testing.T) {
 		t.Fatalf("GetCard after cascade err = %v, want not-found", err)
 	}
 }
+
+func TestRunsForCardPassthrough(t *testing.T) {
+	db := openBoardDB(t)
+	svc, _ := newService(t, db, &fakeManager{})
+
+	_, _, cols := seedWorkspaceBoard(t, db, "ws")
+	card := mustCard(t, db, columnWithStage(cols, "todo").ID, "Card")
+
+	// No runs yet: empty, not an error.
+	if runs, err := svc.RunsForCard(card.ID); err != nil || len(runs) != 0 {
+		t.Fatalf("RunsForCard empty = (%v, %v), want ([], nil)", runs, err)
+	}
+
+	// Seed a run directly at the store layer, then read it back through the
+	// service: the passthrough must surface the store's data untouched.
+	runID := store.NewID()
+	if err := store.StartRun(db, card.ID, runID, "deadbeef", " M f.go"); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if err := store.RecordChange(db, runID, "f.go", store.OpModified); err != nil {
+		t.Fatalf("RecordChange: %v", err)
+	}
+	if err := store.EndRun(db, runID, 42, 1); err != nil {
+		t.Fatalf("EndRun: %v", err)
+	}
+
+	runs, err := svc.RunsForCard(card.ID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	if runs[0].RunID != runID || runs[0].FilesChanged != 1 || runs[0].Files[0] != "f.go" {
+		t.Fatalf("runs[0] = %+v, want run %s with f.go changed", runs[0], runID)
+	}
+
+	// Unknown card: empty slice, nil error.
+	if runs, err := svc.RunsForCard("nope"); err != nil || len(runs) != 0 {
+		t.Fatalf("RunsForCard(unknown) = (%v, %v), want ([], nil)", runs, err)
+	}
+}

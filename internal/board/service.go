@@ -437,3 +437,13 @@ func (s *Service) resolveBoard(st store.UIState, ws store.Workspace) (store.Boar
 	}
 	return b, nil
 }
+
+// RunsForCard returns a card's run history, newest first, for the TUI detail
+// view (T19).
+func (s *Service) RunsForCard(cardID string) ([]store.CardRun, error) {
+	runs, err := store.RunsForCard(s.db, cardID)
+	if err != nil {
+		return nil, fmt.Errorf("board: %w", err)
+	}
+	return runs, nil
+}

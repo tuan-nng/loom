@@ -293,7 +293,7 @@ func TestSeqBeatsTimestamp(t *testing.T) {
 	// Invert the timestamps so a timestamp ordering would return the second
 	// run first. OpenRuns must still return runs in seq order: this test
 	// fails if OpenRuns ever regresses to ORDER BY created_at.
-	if _, err := db.Exec("UPDATE traces SET created_at = '2030-01-01T00:00:00.000' WHERE run_id = ?", second); err != nil {
+	if _, err := db.Exec("UPDATE traces SET created_at = '2000-01-01T00:00:00.000' WHERE run_id = ?", second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -532,5 +532,303 @@ func TestRecentRunsCorruptDataJSON(t *testing.T) {
 	}
 	if _, err := RecentRuns(db, 5); err == nil {
 		t.Error("RecentRuns with corrupt trace_end data_json succeeded, want error")
+	}
+}
+
+// setTraceTimes overwrites a run's trace_start/trace_end created_at with the
+// given values so duration tests are deterministic (the DB DEFAULT writes
+// real wall-clock time). Only the named event rows are touched.
+func setTraceTimes(t *testing.T, db *sql.DB, runID, start, end string) {
+	t.Helper()
+	if start != "" {
+		if _, err := db.Exec("UPDATE traces SET created_at = ? WHERE run_id = ? AND event_type = 'trace_start'", start, runID); err != nil {
+			t.Fatalf("set trace_start time: %v", err)
+		}
+	}
+	if end != "" {
+		if _, err := db.Exec("UPDATE traces SET created_at = ? WHERE run_id = ? AND event_type = 'trace_end'", end, runID); err != nil {
+			t.Fatalf("set trace_end time: %v", err)
+		}
+	}
+}
+
+// startRunFor starts a fresh (unended) run on the given card, returning the
+// runID, for tests that need several runs on one card.
+func startRunFor(t *testing.T, db *sql.DB, cardID string) string {
+	t.Helper()
+	runID := NewID()
+	if err := StartRun(db, cardID, runID, "", ""); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	return runID
+}
+
+func TestRunsForCardNewestFirst(t *testing.T) {
+	db, cardID, first := newTraceRun(t)
+	if err := RecordChange(db, first, "a.txt", OpModified); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, first, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	second := startRunFor(t, db, cardID)
+	if err := RecordChange(db, second, "b.go", OpCreated); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, second, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2", len(runs))
+	}
+	if runs[0].RunID != second {
+		t.Errorf("runs[0].RunID = %s, want %s (newest first)", runs[0].RunID, second)
+	}
+	if runs[1].RunID != first {
+		t.Errorf("runs[1].RunID = %s, want %s", runs[1].RunID, first)
+	}
+	if runs[0].StartedAt == "" || runs[0].EndedAt == nil {
+		t.Errorf("run missing timestamps: StartedAt=%q EndedAt=%v", runs[0].StartedAt, runs[0].EndedAt)
+	}
+	if runs[0].FilesChanged != 1 || runs[0].Files[0] != "b.go" {
+		t.Errorf("run files = %v (changed=%d), want [b.go]", runs[0].Files, runs[0].FilesChanged)
+	}
+}
+
+func TestRunsForCardOpenRun(t *testing.T) {
+	db, cardID, runID := newTraceRun(t)
+	if err := RecordChange(db, runID, "open.go", OpModified); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	if runs[0].EndedAt != nil {
+		t.Errorf("EndedAt = %v, want nil for open run", *runs[0].EndedAt)
+	}
+	if runs[0].DurationMs != 0 {
+		t.Errorf("DurationMs = %d, want 0 for open run", runs[0].DurationMs)
+	}
+	if len(runs[0].Files) != 1 || runs[0].Files[0] != "open.go" {
+		t.Errorf("open run files = %v, want [open.go]", runs[0].Files)
+	}
+}
+
+func TestRunsForCardFilesDedupSorted(t *testing.T) {
+	db, cardID, runID := newTraceRun(t)
+	for _, p := range []string{"z.md", "a.txt", "b.go", "a.txt"} {
+		if err := RecordChange(db, runID, p, OpModified); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := EndRun(db, runID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	want := []string{"a.txt", "b.go", "z.md"}
+	if len(runs[0].Files) != len(want) {
+		t.Fatalf("files = %v, want %v (deduped + sorted)", runs[0].Files, want)
+	}
+	for i, w := range want {
+		if runs[0].Files[i] != w {
+			t.Errorf("files[%d] = %q, want %q", i, runs[0].Files[i], w)
+		}
+	}
+	if runs[0].FilesChanged != len(want) {
+		t.Errorf("FilesChanged = %d, want %d", runs[0].FilesChanged, len(want))
+	}
+}
+
+func TestRunsForCardInterleavedRuns(t *testing.T) {
+	db, cardID, runA := newTraceRun(t)
+	runB := startRunFor(t, db, cardID)
+	// Interleave: A start, B start, A change, B change, A change, B change.
+	if err := RecordChange(db, runA, "x.go", OpModified); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordChange(db, runB, "y.go", OpCreated); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordChange(db, runA, "z.md", OpModified); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordChange(db, runB, "x.go", OpModified); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, runA, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRun(db, runB, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2", len(runs))
+	}
+	// Newest first: runB started after runA.
+	if runs[0].RunID != runB || runs[1].RunID != runA {
+		t.Fatalf("order = [%s, %s], want [%s, %s]", runs[0].RunID, runs[1].RunID, runB, runA)
+	}
+	want := map[string][]string{runA: {"x.go", "z.md"}, runB: {"x.go", "y.go"}}
+	for _, r := range runs {
+		if len(r.Files) != len(want[r.RunID]) {
+			t.Errorf("run %s files = %v, want %v", r.RunID, r.Files, want[r.RunID])
+			continue
+		}
+		for i, p := range r.Files {
+			if p != want[r.RunID][i] {
+				t.Errorf("run %s files[%d] = %q, want %q", r.RunID, i, p, want[r.RunID][i])
+			}
+		}
+	}
+}
+
+func TestRunsForCardDurationCorrectness(t *testing.T) {
+	db, cardID, runID := newTraceRun(t)
+	if err := EndRun(db, runID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	setTraceTimes(t, db, runID, "2026-08-11T12:34:56.789", "2026-08-11T12:35:02.001")
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	if runs[0].DurationMs != 5212 {
+		t.Errorf("DurationMs = %d, want 5212 (12:34:56.789 → 12:35:02.001)", runs[0].DurationMs)
+	}
+
+	sub := startRunFor(t, db, cardID)
+	if err := EndRun(db, sub, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	setTraceTimes(t, db, sub, "2026-08-11T12:00:00.000", "2026-08-11T12:00:00.999")
+	subRuns, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	for _, r := range subRuns {
+		if r.RunID == sub && r.DurationMs != 999 {
+			t.Errorf("sub-second DurationMs = %d, want 999", r.DurationMs)
+		}
+	}
+}
+
+func TestRunsForCardCorruptDataJSON(t *testing.T) {
+	cases := []struct {
+		name      string
+		eventType string
+	}{
+		{"file_change", "file_change"},
+		{"trace_start", "trace_start"},
+		{"trace_end", "trace_end"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, cardID, _ := newTraceRun(t)
+			if _, err := db.Exec(
+				"INSERT INTO traces (id, card_id, run_id, event_type, data_json) VALUES (?, ?, ?, ?, 'not-json')",
+				NewID(), cardID, NewID(), tc.eventType,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := RunsForCard(db, cardID); err == nil {
+				t.Errorf("RunsForCard with corrupt %s data_json succeeded, want error", tc.eventType)
+			}
+		})
+	}
+}
+
+func TestRunsForCardCorruptCreatedAt(t *testing.T) {
+	db, cardID, runID := newTraceRun(t)
+	if err := EndRun(db, runID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE traces SET created_at = 'garbage' WHERE run_id = ? AND event_type = 'trace_start'", runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunsForCard(db, cardID); err == nil {
+		t.Error("RunsForCard with corrupt created_at succeeded, want error")
+	}
+}
+
+func TestRunsForCardCrossCardIsolation(t *testing.T) {
+	db, _, _, dev, _ := newCardTree(t)
+	cardA := mustCard(t)(CreateCard(db, CardInput{ColumnID: dev.ID, Title: "A"}))
+	cardB := mustCard(t)(CreateCard(db, CardInput{ColumnID: dev.ID, Title: "B"}))
+
+	runA := startRunFor(t, db, cardA.ID)
+	if err := RecordChange(db, runA, "a.go", OpModified); err != nil {
+		t.Fatal(err)
+	}
+	runB := startRunFor(t, db, cardB.ID)
+	if err := RecordChange(db, runB, "b.go", OpModified); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := RunsForCard(db, cardA.ID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != runA {
+		t.Fatalf("runs for A = %+v, want only runA", runs)
+	}
+}
+
+func TestRunsForCardUnknownCard(t *testing.T) {
+	db, _, _ := newTraceRun(t)
+	runs, err := RunsForCard(db, NewID())
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want 0", len(runs))
+	}
+}
+
+func TestRunsForCardSeqNotTimestampOrder(t *testing.T) {
+	db, cardID, first := newTraceRun(t)
+	second := startRunFor(t, db, cardID)
+	// Discriminating timestamps: the second run is stamped 2000 (a timestamp
+	// ordering would return it last), but ordering is by trace_start seq, so
+	// the later-started second run must still come first (newest-first).
+	setTraceTimes(t, db, second, "2000-01-01T00:00:00.000", "")
+
+	runs, err := RunsForCard(db, cardID)
+	if err != nil {
+		t.Fatalf("RunsForCard: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2", len(runs))
+	}
+	if runs[0].RunID != second {
+		t.Errorf("runs[0].RunID = %s, want %s (seq order beats created_at)", runs[0].RunID, second)
+	}
+	if runs[1].RunID != first {
+		t.Errorf("runs[1].RunID = %s, want %s", runs[1].RunID, first)
 	}
 }

@@ -191,6 +191,9 @@ func (m Model) layout() string {
 	if m.form != nil {
 		return m.formView()
 	}
+	if m.detail != nil {
+		return m.detailView()
+	}
 	return out
 }
 
@@ -223,7 +226,7 @@ func (m Model) listCount(i int) int {
 
 // runningCount is the number of live card sessions (●), and attachedCount
 // how many are attached (◉). The status map only contains running cards.
-func (m Model) runningCount() int   { return len(m.status) }
+func (m Model) runningCount() int { return len(m.status) }
 func (m Model) attachedCount() int {
 	n := 0
 	for _, s := range m.status {
@@ -285,6 +288,6 @@ var (
 
 	// sessionRunningStyle / sessionAttachedStyle are the ●/◉ live markers
 	// (ADR-001 §3.5): attached outranks running, and both are tinted.
-	sessionRunningStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	sessionAttachedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	sessionRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	sessionAttachedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )
