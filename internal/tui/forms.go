@@ -14,7 +14,7 @@ import (
 	"loom/internal/store"
 )
 
-// formKind discriminates the four T18 overlays (ADR-001 §3.5: n/N/m/e).
+// formKind discriminates the six overlays (ADR-001 §3.5: n/N/m/e/s/w).
 type formKind int
 
 const (
@@ -22,6 +22,8 @@ const (
 	formEditCard
 	formNewColumn
 	formMoveCard
+	formSwitchBoard  // s — board picker (T20)
+	formSwitchWorkspace // w — workspace picker (T20)
 )
 
 // fieldKind discriminates the two interactive field behaviors: a text field
@@ -125,6 +127,14 @@ const (
 	mfColumn = iota
 )
 
+const (
+	sbBoard = iota // switch-board form: single board cycle
+)
+
+const (
+	swWorkspace = iota // switch-workspace form: single workspace cycle
+)
+
 // openNewCardForm is the n overlay: title, the board's columns (seeded with
 // the focused column), priority (seeded "medium", the store default), and the
 // agent picker (seeded at the empty-default entry).
@@ -219,6 +229,46 @@ func openMoveCardForm(svc Service, card store.Card, cols []store.Column) *form {
 	}
 	f.syncFocus()
 	return f
+}
+
+// openBoardSwitchForm is the s overlay: a single board cycle over the current
+// workspace's boards, seeded at the current board. Submit persists the
+// selection through ShowBoard (ui_state write, ADR-001 §6, T20).
+func openBoardSwitchForm(svc Service, boards []store.Board, currentBoardID string) *form {
+	names := make([]string, len(boards))
+	ids := make([]string, len(boards))
+	for i, b := range boards {
+		names[i] = b.Name
+		ids[i] = b.ID
+	}
+	return &form{
+		kind:  formSwitchBoard,
+		title: "Switch Board",
+		svc:   svc,
+		fields: []field{
+			cycleField("board", names, ids, indexOf(ids, currentBoardID)),
+		},
+	}
+}
+
+// openWorkspaceSwitchForm is the w overlay: a single workspace cycle, seeded at
+// the current workspace. Submit persists through SwitchWorkspace (ui_state
+// write + board reset, ADR-001 §6, T20).
+func openWorkspaceSwitchForm(svc Service, workspaces []store.Workspace, currentWorkspaceID string) *form {
+	names := make([]string, len(workspaces))
+	ids := make([]string, len(workspaces))
+	for i, w := range workspaces {
+		names[i] = w.Name
+		ids[i] = w.ID
+	}
+	return &form{
+		kind:  formSwitchWorkspace,
+		title: "Switch Workspace",
+		svc:   svc,
+		fields: []field{
+			cycleField("workspace", names, ids, indexOf(ids, currentWorkspaceID)),
+		},
+	}
 }
 
 // textField builds a text input with the form keymap (tab/up/down must not
@@ -439,6 +489,20 @@ func (f *form) submit() tea.Cmd {
 			card, cerr := f.svc.MoveCard(context.Background(), id, to, nil, nil)
 			return cardMovedMsg{card: card, err: cerr}
 		}
+	case formSwitchBoard:
+		f.closed = true
+		id := f.fields[sbBoard].selectedValue()
+		return func() tea.Msg {
+			board, cerr := f.svc.ShowBoard(id)
+			return boardSwitchedMsg{board: board, err: cerr}
+		}
+	case formSwitchWorkspace:
+		f.closed = true
+		id := f.fields[swWorkspace].selectedValue()
+		return func() tea.Msg {
+			ws, cerr := f.svc.SwitchWorkspace(id)
+			return workspaceSwitchedMsg{ws: ws, err: cerr}
+		}
 	}
 	return nil
 }
@@ -637,6 +701,63 @@ func (m Model) afterCardMoved(msg cardMovedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.note = "moved " + msg.card.Title
 	m.refocus(msg.card.ID)
+	return m, m.fetchCmd()
+}
+
+// applyBoards folds the s picker's list fetch: success opens the board-switch
+// form seeded at the current board; an empty list (impossible in practice —
+// the current board exists) and errors degrade to a notice rather than a
+// broken picker.
+func (m Model) applyBoards(msg boardsMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.note = "switch board: " + msg.err.Error()
+		return m, nil
+	}
+	if len(msg.boards) == 0 {
+		m.note = "no boards in this workspace"
+		return m, nil
+	}
+	m.form = openBoardSwitchForm(m.svc, msg.boards, m.board.ID)
+	return m, nil
+}
+
+// applyWorkspaces folds the w picker's list fetch into the workspace-switch
+// form, seeded at the current workspace.
+func (m Model) applyWorkspaces(msg workspacesMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.note = "switch workspace: " + msg.err.Error()
+		return m, nil
+	}
+	if len(msg.workspaces) == 0 {
+		m.note = "no workspaces (run loom init)"
+		return m, nil
+	}
+	m.form = openWorkspaceSwitchForm(m.svc, msg.workspaces, m.board.WorkspaceID)
+	return m, nil
+}
+
+// afterBoardSwitched folds a board switch: success re-fetches the board —
+// ShowBoard already wrote {workspace, board} to ui_state, so the snapshot
+// materializes the selected board (§6 persistence, T20 `s`); failure becomes
+// a toast.
+func (m Model) afterBoardSwitched(msg boardSwitchedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.note = "switch board: " + msg.err.Error()
+		return m, nil
+	}
+	m.note = "switched board: " + msg.board.Name
+	return m, m.fetchCmd()
+}
+
+// afterWorkspaceSwitched folds a workspace switch: success re-fetches — the
+// board selection is reset (nil) so resolution falls back to the new
+// workspace's first board (ADR-001 §6, T20 `w`); failure becomes a toast.
+func (m Model) afterWorkspaceSwitched(msg workspaceSwitchedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.note = "switch workspace: " + msg.err.Error()
+		return m, nil
+	}
+	m.note = "switched workspace: " + msg.ws.Name
 	return m, m.fetchCmd()
 }
 

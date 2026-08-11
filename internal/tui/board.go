@@ -61,6 +61,34 @@ const (
 	colGap       = 1
 )
 
+// filteredCards is the card set the board renders: the full snapshot narrowed
+// by the active `/` filter ("" = unfiltered). m.cards always stays the full
+// set so toasts, refocus, and detail still reach cards hidden by the filter.
+func (m Model) filteredCards() []store.Card {
+	if m.searchQuery == "" {
+		return m.cards
+	}
+	return filterCards(m.cards, m.searchQuery)
+}
+
+// filterCards keeps cards whose title or description contains q
+// (case-insensitive) — the same client-side semantics as `loom card list
+// --search` (ADR-001 §3.5, T20 `/`).
+func filterCards(cards []store.Card, q string) []store.Card {
+	q = strings.ToLower(q)
+	out := make([]store.Card, 0, len(cards))
+	for _, c := range cards {
+		if strings.Contains(strings.ToLower(c.Title), q) {
+			out = append(out, c)
+			continue
+		}
+		if c.Description != nil && strings.Contains(strings.ToLower(*c.Description), q) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // buildLists creates the column lists from the current snapshot, replacing
 // the stale set. Each list renders no title (the header row is the board's)
 // and no pagination/help; navigation is the board's canonical keymap. Badges
@@ -68,7 +96,7 @@ const (
 // current status snapshot (the poll refreshes them in place).
 func (m *Model) buildLists() {
 	cardsByCol := make(map[string][]list.Item, len(m.columns))
-	for _, c := range m.cards {
+	for _, c := range m.filteredCards() {
 		cardsByCol[c.ColumnID] = append(cardsByCol[c.ColumnID], cardItem{
 			card:     c,
 			badge:    agentBadge(c.AgentOrDefault(m.defaultAgent)),
@@ -173,7 +201,7 @@ func (m *Model) relayout() {
 
 // layout composes the header row, the five column bodies, and the status bar
 // into one string. A T18 form overlay replaces the whole board with its
-// centered box.
+// centered box; the search and help overlays (T20) do the same.
 func (m Model) layout() string {
 	colWidth := 0
 	if n := len(m.lists); n > 0 {
@@ -188,6 +216,12 @@ func (m Model) layout() string {
 	}
 	board := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
 	out := lipgloss.JoinVertical(lipgloss.Top, board, m.statusBar())
+	if m.help {
+		return m.helpOverlay()
+	}
+	if m.searching {
+		return m.searchOverlay()
+	}
 	if m.form != nil {
 		return m.formView()
 	}
@@ -195,6 +229,59 @@ func (m Model) layout() string {
 		return m.detailView()
 	}
 	return out
+}
+
+// searchOverlay centers the `/` filter input over the board; the query
+// commits on enter and narrows the board (T20).
+func (m Model) searchOverlay() string {
+	var b strings.Builder
+	b.WriteString(formTitleStyle.Render("Search"))
+	b.WriteString("\n\n")
+	in := m.search
+	in.SetWidth(searchInputWidth)
+	b.WriteString(formValueStyle.Render("/") + " " + in.View())
+	b.WriteString("\n\n")
+	b.WriteString(formHintStyle.Render("enter filter · esc cancel (matches title/description)"))
+	box := formBoxStyle.Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// searchInputWidth is the search textinput's width inside the overlay box.
+const searchInputWidth = 36
+
+// helpOverlay centers the canonical §3.5 keymap over the board; any key closes
+// it (T20 `?`).
+func (m Model) helpOverlay() string {
+	var b strings.Builder
+	b.WriteString(formTitleStyle.Render("Help — loom keymap"))
+	b.WriteString("\n")
+	for _, r := range helpKeylines {
+		b.WriteString(fmt.Sprintf("  %-19s %s\n", formLabelStyle.Render(r.keys), r.desc))
+	}
+	b.WriteString("\n")
+	b.WriteString(formHintStyle.Render("any key closes"))
+	box := formBoxStyle.Render(b.String())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// helpKeylines is the canonical ADR-001 §3.5 keybinding table, rendered by the
+// `?` overlay. Keep it in sync with defaultKeyMap.
+var helpKeylines = []struct{ keys, desc string }{
+	{"j/k · ↓/↑", "focus card"},
+	{"h/l · ←/→", "focus column"},
+	{"enter", "open card"},
+	{"K", "kill session"},
+	{"n", "new card"},
+	{"N", "new column"},
+	{"m", "move card"},
+	{"d", "detail view"},
+	{"e", "edit card"},
+	{"/", "search/filter cards"},
+	{"s", "switch board"},
+	{"w", "switch workspace"},
+	{"?", "help overlay"},
+	{"q · ctrl+c", "quit (confirm)"},
+	{"Q", "force quit"},
 }
 
 // columnView renders one column: a header (name + card count, focused column
@@ -216,7 +303,7 @@ func (m Model) listCount(i int) int {
 		return 0
 	}
 	n := 0
-	for _, c := range m.cards {
+	for _, c := range m.filteredCards() {
 		if c.ColumnID == m.columns[i].ID {
 			n++
 		}
@@ -238,10 +325,14 @@ func (m Model) attachedCount() int {
 }
 
 // statusBar is the single bottom line: `workspace › board` pinned left, the
-// session summary / note pinned right. With the quit overlay open the right
-// half is the confirm prompt.
+// session summary / note pinned right. An active `/` filter is shown next to
+// the selection so a narrowed board never reads as the full board. With the
+// quit overlay open the right half is the confirm prompt.
 func (m Model) statusBar() string {
 	left := fmt.Sprintf("%s › %s", m.ws.Name, m.board.Name)
+	if m.searchQuery != "" {
+		left += fmt.Sprintf("  /%s", m.searchQuery)
+	}
 
 	var right string
 	switch {

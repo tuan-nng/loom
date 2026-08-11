@@ -10,10 +10,12 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"loom/internal/board"
@@ -32,11 +34,18 @@ import (
 // BubbleTea owns the terminal, and DefaultAgent resolves card agent badges
 // (DESIGN-002 §14). The T18 forms are the other write half: CreateCard,
 // UpdateCard, GetCard, CreateColumn, and MoveCard (which applies the
-// done-stage auto-kill rule, ADR-001 §4.1 step 4).
+// done-stage auto-kill rule, ADR-001 §4.1 step 4). The T20 extras complete
+// the §3.5 surface: ListWorkspaces/ListBoards feed the s/w switch pickers,
+// and ShowBoard/SwitchWorkspace persist the selection to ui_state (T12,
+// ADR-001 §6).
 type Service interface {
 	ResolveSelection() (store.Workspace, store.Board, error)
 	ListColumns(boardID string) ([]store.Column, error)
 	ListCardsByBoard(boardID string) ([]store.Card, error)
+	ListWorkspaces() ([]store.Workspace, error)
+	ListBoards(workspaceID string) ([]store.Board, error)
+	ShowBoard(boardID string) (store.Board, error)
+	SwitchWorkspace(workspaceID string) (store.Workspace, error)
 	SessionStatus(ctx context.Context) (map[string]session.SessionStatus, error)
 	OpenCard(ctx context.Context, cardID string, detach bool) error
 	CloseCard(ctx context.Context, cardID string) error
@@ -105,6 +114,35 @@ type attachDoneMsg struct {
 	err    error
 }
 
+// boardsMsg carries the current workspace's boards for the `s` switch picker.
+// The listing is fetched off the critical path so the board key handler never
+// blocks Update on a DB read.
+type boardsMsg struct {
+	boards []store.Board
+	err    error
+}
+
+// workspacesMsg carries every workspace for the `w` switch picker.
+type workspacesMsg struct {
+	workspaces []store.Workspace
+	err        error
+}
+
+// boardSwitchedMsg is the result of a board-switch submit: the persisted
+// selection (ShowBoard writes {workspace, board} to ui_state) or the error.
+type boardSwitchedMsg struct {
+	board store.Board
+	err   error
+}
+
+// workspaceSwitchedMsg is the result of a workspace-switch submit: the
+// persisted selection (SwitchWorkspace writes {workspace, board: nil}) or the
+// error.
+type workspaceSwitchedMsg struct {
+	ws  store.Workspace
+	err error
+}
+
 // Model is the board application state.
 type Model struct {
 	svc          Service
@@ -135,6 +173,16 @@ type Model struct {
 	form   *form       // n/N/m/e overlay open (T18); nil = board navigation active
 	detail *cardDetail // `d` detail pane open (T19); nil = closed
 
+	// search overlays the board on `/` (T20): searching gates every key to the
+	// input, searchQuery is the applied filter (" = unfiltered). The active
+	// query narrows the rendered board to title/description matches, the same
+	// client-side semantics as `loom card list --search` (ADR-001 §3.5).
+	search      textinput.Model
+	searching   bool
+	searchQuery string
+
+	help bool // `?` help overlay open (T20); any key closes it
+
 	// pendingFocus is the card the cursor should land on once the post-mutation
 	// snapshot lands. The lists at submit time are stale (the fetch is in
 	// flight), so refocus only records intent; applyPendingFocus consumes it in
@@ -145,11 +193,14 @@ type Model struct {
 // New returns the board model ready for tea.NewProgram. The default agent is
 // read from the service so the badge never drifts from launch config.
 func New(svc Service) Model {
+	search := textinput.New()
+	search.KeyMap = formInputKeyMap()
 	return Model{
 		svc:          svc,
 		defaultAgent: svc.DefaultAgent(),
 		phase:        phaseLoading,
 		killedByUser: make(map[string]bool),
+		search:       search,
 	}
 }
 
@@ -202,6 +253,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterKill(msg)
 	case attachDoneMsg:
 		return m.afterAttach(msg)
+	case boardsMsg:
+		return m.applyBoards(msg)
+	case workspacesMsg:
+		return m.applyWorkspaces(msg)
+	case boardSwitchedMsg:
+		return m.afterBoardSwitched(msg)
+	case workspaceSwitchedMsg:
+		return m.afterWorkspaceSwitched(msg)
 	case cardCreatedMsg:
 		return m.afterCardCreated(msg)
 	case cardUpdatedMsg:
@@ -386,20 +445,11 @@ func Run(svc Service) error {
 	return err
 }
 
-// noteT19/20 hold the stub notices wired in keyPress; they name the task that
-// ships each feature so the board never swallows a canonical key. The T18 keys
-// (n/N/m/e) are live since T18.
-const (
-	noteSearch    = "/: search/filter — T20"
-	noteBoard     = "s: switch board — T20"
-	noteWorkspace = "w: switch workspace — T20"
-	noteHelp      = "?: help overlay — T20"
-)
-
 // keyPress handles one key against the canonical §3.5 keymap. Navigation is
 // live (j/k within the focused column, h/l across columns, paging); feature
-// keys set a status-bar stub notice. Quit confirms when sessions live; force
-// quit always exits (sessions keep running detached).
+// keys are live since their task shipped (open/kill T17, forms T18, detail
+// T19, search/switch/help T20). Quit confirms when sessions live; force quit
+// always exits (sessions keep running detached).
 func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	km := defaultKeyMap()
 
@@ -416,6 +466,14 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.detail != nil {
 		return m.detailUpdate(msg)
+	}
+	if m.searching {
+		return m.searchUpdate(msg)
+	}
+	if m.help {
+		// The help overlay is dismiss-only: any key closes it (T20).
+		m.help = false
+		return m, nil
 	}
 
 	switch {
@@ -485,19 +543,68 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, km.Detail):
 		return m.openCardDetail()
 	case key.Matches(msg, km.Search):
-		m.note = noteSearch
-		return m, nil
+		return m.startSearch()
 	case key.Matches(msg, km.Board):
-		m.note = noteBoard
-		return m, nil
+		return m, m.boardsCmd()
 	case key.Matches(msg, km.Workspace):
-		m.note = noteWorkspace
-		return m, nil
+		return m, m.workspacesCmd()
 	case key.Matches(msg, km.Help):
-		m.note = noteHelp
+		m.help = true
 		return m, nil
 	}
 	return m, nil
+}
+
+// startSearch opens the `/` search overlay, pre-filled with the active filter
+// so it can be extended or cleared. Enter applies the query as the board
+// filter; esc cancels without touching the active filter (T20).
+func (m Model) startSearch() (tea.Model, tea.Cmd) {
+	m.searching = true
+	m.search.Focus()
+	m.search.SetValue(m.searchQuery)
+	m.search.CursorEnd()
+	return m, nil
+}
+
+// searchUpdate owns every key while the search overlay is open: enter applies
+// the query (an empty query clears the filter) and closes, esc cancels, and
+// every other key types into the input.
+func (m Model) searchUpdate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	km := defaultFormKeyMap()
+	switch {
+	case key.Matches(msg, km.cancel):
+		m.search.Blur()
+		m.searching = false
+		return m, nil
+	case key.Matches(msg, km.submit):
+		m.searchQuery = strings.TrimSpace(m.search.Value())
+		m.search.Blur()
+		m.searching = false
+		m.buildLists()
+		m.relayout()
+		return m, nil
+	}
+	updated, _ := m.search.Update(msg)
+	m.search = updated
+	return m, nil
+}
+
+// boardsCmd fetches the current workspace's boards off the critical path so
+// the `s` picker opens with fresh data (ADR-001 §6).
+func (m Model) boardsCmd() tea.Cmd {
+	return func() tea.Msg {
+		boards, err := m.svc.ListBoards(m.board.WorkspaceID)
+		return boardsMsg{boards: boards, err: err}
+	}
+}
+
+// workspacesCmd fetches every workspace off the critical path for the `w`
+// picker.
+func (m Model) workspacesCmd() tea.Cmd {
+	return func() tea.Msg {
+		workspaces, err := m.svc.ListWorkspaces()
+		return workspacesMsg{workspaces: workspaces, err: err}
+	}
 }
 
 // focusedCardID returns the card under the column cursor. The list's Index is
