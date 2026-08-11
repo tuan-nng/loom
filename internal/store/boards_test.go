@@ -114,3 +114,22 @@ func TestGetBoardNotFound(t *testing.T) {
 		t.Fatalf("GetBoard missing = %v, want sql.ErrNoRows", err)
 	}
 }
+
+// TestValidStagesMatchesDefaultColumns pins the stage set and its order to
+// the seeded template (ADR-001 §3.3), so a future schema/seed change cannot
+// silently drift the TUI picker and CLI validation away from what loom init
+// creates.
+func TestValidStagesMatchesDefaultColumns(t *testing.T) {
+	want := []string{"backlog", "todo", "dev", "review", "done"}
+	if len(ValidStages) != len(want) {
+		t.Fatalf("len(ValidStages) = %d, want %d", len(ValidStages), len(want))
+	}
+	for i, s := range ValidStages {
+		if s != want[i] {
+			t.Errorf("ValidStages[%d] = %q, want %q", i, s, want[i])
+		}
+		if s != DefaultColumns[i].Stage {
+			t.Errorf("ValidStages[%d] = %q, drift from DefaultColumns[%d].Stage %q", i, s, i, DefaultColumns[i].Stage)
+		}
+	}
+}

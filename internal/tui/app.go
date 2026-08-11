@@ -30,7 +30,9 @@ import (
 // session (detach leaves it running headless), CloseCard kills + finalizes,
 // TmuxAttach returns the attach handoff the TUI runs via tea.ExecProcess so
 // BubbleTea owns the terminal, and DefaultAgent resolves card agent badges
-// (DESIGN-002 §14).
+// (DESIGN-002 §14). The T18 forms are the other write half: CreateCard,
+// UpdateCard, GetCard, CreateColumn, and MoveCard (which applies the
+// done-stage auto-kill rule, ADR-001 §4.1 step 4).
 type Service interface {
 	ResolveSelection() (store.Workspace, store.Board, error)
 	ListColumns(boardID string) ([]store.Column, error)
@@ -40,6 +42,11 @@ type Service interface {
 	CloseCard(ctx context.Context, cardID string) error
 	TmuxAttach(cardID string) (*exec.Cmd, error)
 	DefaultAgent() string
+	CreateCard(in store.CardInput) (store.Card, error)
+	UpdateCard(id string, u store.CardUpdate) (store.Card, error)
+	GetCard(id string) (store.Card, error)
+	CreateColumn(boardID, name, stage string) (store.Column, error)
+	MoveCard(ctx context.Context, cardID, toColumnID string, beforeID, afterID *string) (store.Card, error)
 }
 
 // phase is the model's lifecycle state.
@@ -122,6 +129,14 @@ type Model struct {
 	note string // status-bar toast (stub key hints, session notices)
 
 	confirmQuit bool // q pressed with sessions attached: overlay open
+
+	form *form // n/N/m/e overlay open (T18); nil = board navigation active
+
+	// pendingFocus is the card the cursor should land on once the post-mutation
+	// snapshot lands. The lists at submit time are stale (the fetch is in
+	// flight), so refocus only records intent; applyPendingFocus consumes it in
+	// applyFetch after the fresh lists build.
+	pendingFocus string
 }
 
 // New returns the board model ready for tea.NewProgram. The default agent is
@@ -184,6 +199,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterKill(msg)
 	case attachDoneMsg:
 		return m.afterAttach(msg)
+	case cardCreatedMsg:
+		return m.afterCardCreated(msg)
+	case cardUpdatedMsg:
+		return m.afterCardUpdated(msg)
+	case columnCreatedMsg:
+		return m.afterColumnCreated(msg)
+	case cardMovedMsg:
+		return m.afterCardMoved(msg)
 	case tea.KeyPressMsg:
 		if m.phase != phaseReady {
 			return m, nil
@@ -218,6 +241,7 @@ func (m Model) applyFetch(msg fetchMsg) (tea.Model, tea.Cmd) {
 	m.focus = 0
 	m.buildLists()
 	m.relayout()
+	m.applyPendingFocus()
 	return m, m.startPoll()
 }
 
@@ -359,18 +383,15 @@ func Run(svc Service) error {
 	return err
 }
 
-// noteT17/18/19/20 hold the stub notices wired in keyPress; they name the
-// task that ships each feature so the board never swallows a canonical key.
+// noteT19/20 hold the stub notices wired in keyPress; they name the task that
+// ships each feature so the board never swallows a canonical key. The T18 keys
+// (n/N/m/e) are live since T18.
 const (
-	noteNewCard    = "n: new card form — T18"
-	noteNewColumn  = "N: new column form — T18"
-	noteMove       = "m: move card column picker — T18"
-	noteEdit       = "e: edit card fields — T18"
-	noteDetail     = "d: card detail view — T19"
-	noteSearch     = "/: search/filter — T20"
-	noteBoard      = "s: switch board — T20"
-	noteWorkspace  = "w: switch workspace — T20"
-	noteHelp       = "?: help overlay — T20"
+	noteDetail    = "d: card detail view — T19"
+	noteSearch    = "/: search/filter — T20"
+	noteBoard     = "s: switch board — T20"
+	noteWorkspace = "w: switch workspace — T20"
+	noteHelp      = "?: help overlay — T20"
 )
 
 // keyPress handles one key against the canonical §3.5 keymap. Navigation is
@@ -382,6 +403,14 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.confirmQuit {
 		return m.quitOverlay(msg, km)
+	}
+
+	// A form overlay owns every key until it closes (T18): typing, cycling,
+	// tab navigation, enter submit, esc cancel. The board's bindings are dead
+	// while a form is open, so 'q' types into a focused field rather than
+	// quitting.
+	if m.form != nil {
+		return m.formUpdate(msg)
 	}
 
 	switch {
@@ -427,16 +456,26 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.note = "killing " + m.cardTitle(id) + "…"
 		return m, m.killCmd(id)
 	case key.Matches(msg, km.NewCard):
-		m.note = noteNewCard
+		m.form = m.newCardForm()
 		return m, nil
 	case key.Matches(msg, km.NewColumn):
-		m.note = noteNewColumn
+		m.form = m.newColumnForm()
 		return m, nil
 	case key.Matches(msg, km.Move):
-		m.note = noteMove
+		id, ok := m.focusedCardID()
+		if !ok {
+			m.note = "no card to move"
+			return m, nil
+		}
+		m.form = m.moveCardForm(id)
 		return m, nil
 	case key.Matches(msg, km.Edit):
-		m.note = noteEdit
+		id, ok := m.focusedCardID()
+		if !ok {
+			m.note = "no card to edit"
+			return m, nil
+		}
+		m.form = m.editCardForm(id)
 		return m, nil
 	case key.Matches(msg, km.Detail):
 		m.note = noteDetail
@@ -474,6 +513,47 @@ func (m Model) focusedCardID() (string, bool) {
 		return "", false
 	}
 	return ci.card.ID, true
+}
+
+// cardByID returns the in-memory card, used to seed the edit/move forms from
+// the snapshot rather than a second service read.
+func (m Model) cardByID(id string) (store.Card, bool) {
+	for _, c := range m.cards {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return store.Card{}, false
+}
+
+// newCardForm opens the n overlay against the current snapshot: columns,
+// default agent, and the focused column as the seeded target.
+func (m Model) newCardForm() *form {
+	return openNewCardForm(m.svc, m.columns, m.defaultAgent, m.focus)
+}
+
+// newColumnForm opens the N overlay against the current board.
+func (m Model) newColumnForm() *form {
+	return openNewColumnForm(m.svc, m.board.ID)
+}
+
+// editCardForm opens the e overlay seeded from the focused card.
+func (m Model) editCardForm(id string) *form {
+	c, ok := m.cardByID(id)
+	if !ok {
+		return nil
+	}
+	return openEditCardForm(m.svc, c, m.defaultAgent)
+}
+
+// moveCardForm opens the m overlay for the focused card, offering its board's
+// columns (the current board — all rendered cards live here).
+func (m Model) moveCardForm(id string) *form {
+	c, ok := m.cardByID(id)
+	if !ok {
+		return nil
+	}
+	return openMoveCardForm(m.svc, c, m.columns)
 }
 
 // openSessionCmd ensures the card's session without attaching (detach=true —

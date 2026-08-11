@@ -20,6 +20,17 @@ var DefaultColumns = []struct {
 	{Name: "Done", Stage: "done", Position: 4000},
 }
 
+// ValidStages is the closed stage set enforced by the columns.stage CHECK
+// (ADR-001 §3.3), derived from DefaultColumns so it can never drift from the
+// seeded template (one stage per default column, in display order).
+var ValidStages = func() []string {
+	stages := make([]string, len(DefaultColumns))
+	for i, dc := range DefaultColumns {
+		stages[i] = dc.Stage
+	}
+	return stages
+}()
+
 type Board struct {
 	ID          string
 	WorkspaceID string

@@ -110,6 +110,32 @@ func (m *Model) refreshMarkers() {
 	}
 }
 
+// refocus records the card the cursor should land on once the post-mutation
+// snapshot lands. Called from the form after* handlers; applyFetch's contract
+// is unchanged (it still rebuilds and resets focus), applyPendingFocus runs
+// after the fresh lists exist.
+func (m *Model) refocus(cardID string) { m.pendingFocus = cardID }
+
+// applyPendingFocus lands the column focus and list cursor on the card
+// recorded by refocus, if the fresh snapshot holds it. Inert otherwise.
+func (m *Model) applyPendingFocus() {
+	if m.pendingFocus == "" {
+		return
+	}
+	id := m.pendingFocus
+	m.pendingFocus = ""
+	for i := range m.lists {
+		for j, it := range m.lists[i].Items() {
+			ci, ok := it.(cardItem)
+			if ok && ci.card.ID == id {
+				m.focus = i
+				m.lists[i].Select(j)
+				return
+			}
+		}
+	}
+}
+
 // agentBadge is the short tag DESIGN-002 §14 defines: "cl" for claude, "oc"
 // for opencode, the resolved name for any future driver.
 func agentBadge(name string) string {
@@ -146,7 +172,8 @@ func (m *Model) relayout() {
 }
 
 // layout composes the header row, the five column bodies, and the status bar
-// into one string.
+// into one string. A T18 form overlay replaces the whole board with its
+// centered box.
 func (m Model) layout() string {
 	colWidth := 0
 	if n := len(m.lists); n > 0 {
@@ -160,7 +187,11 @@ func (m Model) layout() string {
 		cols[i] = m.columnView(i, colWidth)
 	}
 	board := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
-	return lipgloss.JoinVertical(lipgloss.Top, board, m.statusBar())
+	out := lipgloss.JoinVertical(lipgloss.Top, board, m.statusBar())
+	if m.form != nil {
+		return m.formView()
+	}
+	return out
 }
 
 // columnView renders one column: a header (name + card count, focused column

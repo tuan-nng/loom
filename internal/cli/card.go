@@ -5,16 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"loom/internal/agent"
 	"loom/internal/store"
 )
-
-// validPriorities is the closed priority set enforced by the cards.priority
-// CHECK (ADR-001 §3.3). The CLI validates up front for a friendly message;
-// the schema remains the enforcement point.
-var validPriorities = map[string]bool{"low": true, "medium": true, "high": true}
 
 // runCardAdd creates a card in the resolved (or --board/--column-scoped)
 // column. --priority left empty picks up the store's "medium" default
@@ -38,8 +34,8 @@ func runCardAdd(a *App, args []string) error {
 	if err := expectArgs(fs, 1, 1); err != nil {
 		return err
 	}
-	if *priority != "" && !validPriorities[*priority] {
-		return fmt.Errorf("invalid priority %q (accepted: low, medium, high)", *priority)
+	if *priority != "" && !slices.Contains(store.ValidPriorities, *priority) {
+		return fmt.Errorf("invalid priority %q (accepted: %s)", *priority, acceptedPriorities())
 	}
 	if *agentName != "" && !agent.IsKnown(*agentName) {
 		return fmt.Errorf("invalid agent %q (accepted: %s)", *agentName, acceptedAgents())
@@ -122,8 +118,8 @@ func runCardUpdate(a *App, args []string) error {
 		if *priority == "" {
 			return fmt.Errorf("--priority must not be empty")
 		}
-		if !validPriorities[*priority] {
-			return fmt.Errorf("invalid priority %q (accepted: low, medium, high)", *priority)
+		if !slices.Contains(store.ValidPriorities, *priority) {
+			return fmt.Errorf("invalid priority %q (accepted: %s)", *priority, acceptedPriorities())
 		}
 	}
 	if visited["agent"] && *agentName != "" && !agent.IsKnown(*agentName) {
@@ -400,6 +396,13 @@ func acceptedAgents() string {
 		quoted[i] = fmt.Sprintf("%q", n)
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// acceptedPriorities renders store.ValidPriorities as a comma-joined list for
+// invalid-priority messages, keeping the pre-promotion byte-identical output
+// (the original message printed the unquoted set).
+func acceptedPriorities() string {
+	return strings.Join(store.ValidPriorities, ", ")
 }
 
 // derefStr renders a nullable string field as "" when unset, for card show's

@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"loom/internal/store"
 )
-
-// validStages is the closed stage set enforced by the columns.stage CHECK
-// (ADR-001 §3.3). The CLI validates up front for a friendly message; the schema
-// remains the enforcement point.
-var validStages = map[string]bool{"backlog": true, "todo": true, "dev": true, "review": true, "done": true}
 
 const defaultColumnStage = "todo"
 
@@ -263,8 +260,8 @@ func runColumnAdd(a *App, args []string) error {
 	if err := expectArgs(fs, 1, 1); err != nil {
 		return err
 	}
-	if !validStages[*stage] {
-		return fmt.Errorf("invalid stage %q (accepted: backlog, todo, dev, review, done)", *stage)
+	if !slices.Contains(store.ValidStages, *stage) {
+		return fmt.Errorf("invalid stage %q (accepted: %s)", *stage, acceptedStages())
 	}
 	_, b, err := a.boardOf(fs, *boardName)
 	if err != nil {
@@ -276,6 +273,13 @@ func runColumnAdd(a *App, args []string) error {
 	}
 	fmt.Fprintf(a.out, "added column %s (stage %s) to board %s\n", c.Name, c.Stage, b.Name)
 	return nil
+}
+
+// acceptedStages renders store.ValidStages as a comma-joined list for
+// invalid-stage messages, keeping the pre-promotion byte-identical output
+// (the original message printed the unquoted set).
+func acceptedStages() string {
+	return strings.Join(store.ValidStages, ", ")
 }
 
 func runColumnList(a *App, args []string) error {

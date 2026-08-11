@@ -44,6 +44,11 @@ func (c Card) AgentOrDefault(def string) string {
 
 const cardColumns = "id, column_id, board_id, workspace_id, codebase_id, title, description, objective, acceptance_criteria, priority, labels, agent, position, created_at, updated_at"
 
+// ValidPriorities is the closed priority set enforced by the cards.priority
+// CHECK (ADR-001 §3.3), in display order. "medium" is the store default when
+// a CardInput leaves priority empty (createCard).
+var ValidPriorities = []string{"low", "medium", "high"}
+
 // CardInput carries the mutable fields for a new card.
 type CardInput struct {
 	ColumnID           string

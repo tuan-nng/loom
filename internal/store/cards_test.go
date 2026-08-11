@@ -469,3 +469,17 @@ func ListByColumnOrFatal(t *testing.T, db *sql.DB, columnID string) []Card {
 	}
 	return cs
 }
+
+// TestValidPrioritiesOrder pins the priority set and display order used by
+// the TUI picker and CLI validation to the schema CHECK (ADR-001 §3.3).
+func TestValidPrioritiesOrder(t *testing.T) {
+	want := []string{"low", "medium", "high"}
+	if len(ValidPriorities) != len(want) {
+		t.Fatalf("len(ValidPriorities) = %d, want %d", len(ValidPriorities), len(want))
+	}
+	for i, p := range ValidPriorities {
+		if p != want[i] {
+			t.Errorf("ValidPriorities[%d] = %q, want %q", i, p, want[i])
+		}
+	}
+}

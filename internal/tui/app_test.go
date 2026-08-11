@@ -25,18 +25,39 @@ func plain(s string) string { return ansiRE.ReplaceAllString(s, "") }
 // fakeService stubs the whole Service seam with hand-set data, recording the
 // session writes so tests assert the open/kill handoffs.
 type fakeService struct {
-	ws         store.Workspace
-	board      store.Board
-	cols       []store.Column
-	cards      []store.Card
-	status     map[string]session.SessionStatus
-	err        error
-	statusErr  error
-	defaultA   string
-	openErr    error
-	closeErr   error
-	openCalls  []struct{ cardID string; detach bool }
+	ws        store.Workspace
+	board     store.Board
+	cols      []store.Column
+	cards     []store.Card
+	status    map[string]session.SessionStatus
+	err       error
+	statusErr error
+	defaultA  string
+	openErr   error
+	closeErr  error
+	openCalls []struct {
+		cardID string
+		detach bool
+	}
 	closeCalls []string
+
+	createInput store.CardInput
+	createErr   error
+	createOut   *store.Card
+	updateID    string
+	updateInput store.CardUpdate
+	updateErr   error
+	updateOut   *store.Card
+	createCol   []struct {
+		boardID, name, stage string
+	}
+	createColErr error
+	moveCalls    []struct {
+		cardID, toColumnID string
+		beforeID, afterID  *string
+	}
+	moveErr error
+	moveOut *store.Card
 }
 
 func (f fakeService) ResolveSelection() (store.Workspace, store.Board, error) {
@@ -76,6 +97,78 @@ func (f fakeService) TmuxAttach(cardID string) (*exec.Cmd, error) {
 
 func (f fakeService) DefaultAgent() string { return f.defaultA }
 
+func (f *fakeService) CreateCard(in store.CardInput) (store.Card, error) {
+	f.createInput = in
+	if f.createErr != nil {
+		return store.Card{}, f.createErr
+	}
+	if f.createOut != nil {
+		return *f.createOut, nil
+	}
+	return store.Card{ID: "new1", ColumnID: in.ColumnID, BoardID: f.board.ID, Title: in.Title, Priority: in.Priority, Agent: in.Agent}, nil
+}
+
+func (f *fakeService) UpdateCard(id string, u store.CardUpdate) (store.Card, error) {
+	f.updateID = id
+	f.updateInput = u
+	if f.updateErr != nil {
+		return store.Card{}, f.updateErr
+	}
+	if f.updateOut != nil {
+		return *f.updateOut, nil
+	}
+	var card store.Card
+	for _, c := range f.cards {
+		if c.ID == id {
+			card = c
+			break
+		}
+	}
+	if u.Title != nil {
+		card.Title = *u.Title
+	}
+	return card, nil
+}
+
+func (f fakeService) GetCard(id string) (store.Card, error) {
+	for _, c := range f.cards {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return store.Card{}, errors.New("card not found")
+}
+
+func (f *fakeService) CreateColumn(boardID, name, stage string) (store.Column, error) {
+	f.createCol = append(f.createCol, struct {
+		boardID, name, stage string
+	}{boardID, name, stage})
+	if f.createColErr != nil {
+		return store.Column{}, f.createColErr
+	}
+	return store.Column{ID: "col-new", BoardID: boardID, Name: name, Stage: stage}, nil
+}
+
+func (f *fakeService) MoveCard(_ context.Context, cardID, toColumnID string, beforeID, afterID *string) (store.Card, error) {
+	f.moveCalls = append(f.moveCalls, struct {
+		cardID, toColumnID string
+		beforeID, afterID  *string
+	}{cardID, toColumnID, beforeID, afterID})
+	if f.moveErr != nil {
+		return store.Card{}, f.moveErr
+	}
+	if f.moveOut != nil {
+		return *f.moveOut, nil
+	}
+	for i := range f.cards {
+		if f.cards[i].ID == cardID {
+			f.cards[i].ColumnID = toColumnID
+			return f.cards[i], nil
+		}
+	}
+	return store.Card{}, errors.New("card not found")
+}
+
 // execMsg runs a cmd and returns the msg it produces. Only safe for the plain
 // cmds in these tests (never the attach ExecProcess, which would exec tmux).
 func execMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
@@ -113,16 +206,39 @@ func readyModel(t *testing.T, svc Service) Model {
 // defaultA mirrors config.Default's agent default ("claude").
 func newBoardService() *fakeService {
 	return &fakeService{
-		ws:        store.Workspace{ID: "w1", Name: "loom"},
-		board:     store.Board{ID: "b1", WorkspaceID: "w1", Name: "board"},
-		cols:      defaultColumns(),
-		defaultA:  "claude",
+		ws:       store.Workspace{ID: "w1", Name: "loom"},
+		board:    store.Board{ID: "b1", WorkspaceID: "w1", Name: "board"},
+		cols:     defaultColumns(),
+		defaultA: "claude",
 	}
 }
 
 func press(t *testing.T, m Model, code rune) (Model, tea.Cmd) {
 	t.Helper()
 	nm, cmd := m.Update(tea.KeyPressMsg{Code: code})
+	return nm.(Model), cmd
+}
+
+// typeText drives printable characters into the focused field, one
+// KeyPressMsg per rune. press() only sets Code, but textinput inserts from
+// msg.Text — so typing needs both fields set (Code to match bindings, Text to
+// insert).
+func typeText(t *testing.T, m Model, s string) (Model, tea.Cmd) {
+	t.Helper()
+	var cmd tea.Cmd
+	for _, r := range s {
+		var nm tea.Model
+		nm, cmd = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = nm.(Model)
+	}
+	return m, cmd
+}
+
+// pressKey drives any key including special keys and modifiers (shift+tab
+// etc.) via its tea.KeyPressMsg directly.
+func pressKey(t *testing.T, m Model, k tea.KeyPressMsg) (Model, tea.Cmd) {
+	t.Helper()
+	nm, cmd := m.Update(k)
 	return nm.(Model), cmd
 }
 
@@ -247,11 +363,11 @@ func TestInitErrRoutesToErrorView(t *testing.T) {
 }
 
 // TestStubKeysSetNotice verifies a stubbed canonical key names its task in
-// the status bar. K and enter are live since T17 and are covered by their own
-// tests.
+// the status bar. K/enter are live since T17, n/N/m/e since T18 — each is
+// covered by its own tests.
 func TestStubKeysSetNotice(t *testing.T) {
 	m := readyModel(t, newBoardService())
-	for _, kc := range []rune{'n', 'd', 'e', 'm', 'N', '/', 's', 'w', '?'} {
+	for _, kc := range []rune{'d', '/', 's', 'w', '?'} {
 		m, _ = press(t, m, kc)
 		if m.note == "" {
 			t.Errorf("key %c produced no stub notice", kc)
