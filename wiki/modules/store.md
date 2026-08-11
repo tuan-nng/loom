@@ -38,6 +38,10 @@ tags: [wiki, module, store, sqlite]
 - **`OpenRuns`** — every un-finalized run (`trace_start` with no `trace_end`), `ORDER BY seq`, parsed into `OpenRun{CardID, RunID, BaseHead, Porcelain}` — the input to reconcile-on-startup (ADR-001 §4.1 step 5). A row with corrupt `data_json` surfaces as an error, never silently-empty fields.
 - **Ordering is `seq` only** — never timestamps; enforced by the AUTOINCREMENT key, which survives `VACUUM`.
 
+**Implemented (T19):**
+
+- **`RunsForCard(db, cardID)`** — every run of one card, newest first **by the seq of each run's `trace_start`** (the only ordering key, ADR-001 §3.3 — never `created_at`, pinned by `TestRunsForCardSeqNotTimestampOrder`), each parsed into `CardRun{RunID, StartedAt, EndedAt, DurationMs, Files, FilesChanged}`. A single scan over the card's traces grouped in Go (the query orders by `(run_id, seq)`, served by `idx_traces_card_run`, so a run's rows are contiguous). `EndedAt` is nil and `DurationMs` is 0 exactly when the run is still open; `DurationMs` is `trace_end.created_at` minus `trace_start.created_at` in ms. `Files` is the deduplicated, lexicographically-sorted set of `file_change` paths. Corrupt `data_json` in any event type and an unparseable `created_at` surface as errors. Feeds the T19 card detail view. `TraceTimeLayout` (the traces table's DEFAULT time layout) is exported for the TUI.
+
 **Implemented (T13):**
 
 - **`RecentRuns(db, limit)`** — the `limit` most-recently-ended runs (`trace_end` rows JOIN `cards` for the title), `ORDER BY t.seq DESC`, parsed into `RecentRun{CardID, Title, DurationMs, FilesChanged}`. Corrupt `data_json` surfaces as an error; `limit <= 0` returns `(nil, nil)`. Feeds `loom status`'s recent-runs section (ADR-001 §6).
@@ -99,6 +103,7 @@ func EndRun(db *sql.DB, runID string, durationMs, filesChanged int) error
 func OpenRuns(db *sql.DB) ([]OpenRun, error)
 func AbortRun(db *sql.DB, runID string) error
 func RecentRuns(db *sql.DB, limit int) ([]RecentRun, error) // newest-ended first, ORDER BY seq (T13, feeds `loom status`)
+func RunsForCard(db *sql.DB, cardID string) ([]CardRun, error) // newest-first by trace_start seq (T19, feeds the card detail view)
 ```
 
 - `Open` opens `"sqlite"` at `path`, sets `SetMaxOpenConns(1)`, then applies the goose migrations; returns a ready `*sql.DB` with pragmas enforced on every pooled connection by the hook. Third-party errors are returned bare; `db.Close()` runs on any migration failure.
@@ -115,7 +120,7 @@ func RecentRuns(db *sql.DB, limit int) ([]RecentRun, error) // newest-ended firs
 - `internal/store/ui_state.go` — `UIState` + get/set (implemented, T5)
 - `internal/store/init.go` — `InitWorkspace` (implemented, T5)
 - `internal/store/cards.go` — card CRUD + reorder (implemented, T6)
-- `internal/store/traces.go` — run lifecycle: `StartRun`/`RecordChange`/`EndRun`/`OpenRuns`/`AbortRun` + `data_json` shapes (implemented, T7)
+- `internal/store/traces.go` — run lifecycle: `StartRun`/`RecordChange`/`EndRun`/`OpenRuns`/`AbortRun`, `RunsForCard` per-card run history, `CardRun`/`TraceTimeLayout` + `data_json` shapes (implemented, T7)
 
 ## Dependencies
 

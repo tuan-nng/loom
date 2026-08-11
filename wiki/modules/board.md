@@ -48,6 +48,9 @@ func (s *Service) GetCodebase(id string) (store.Codebase, error)
 func (s *Service) ListCodebases(workspaceID string) ([]store.Codebase, error)
 func (s *Service) DeleteCodebase(id string) error
 
+// Run history
+func (s *Service) RunsForCard(cardID string) ([]store.CardRun, error) // passthrough (T19, feeds the card detail view)
+
 // Selection switching (persists ui_state)
 func (s *Service) SwitchWorkspace(workspaceID string) (store.Workspace, error) // clears board selection
 func (s *Service) ShowBoard(boardID string) (store.Board, error)

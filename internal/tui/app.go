@@ -45,8 +45,10 @@ type Service interface {
 	CreateCard(in store.CardInput) (store.Card, error)
 	UpdateCard(id string, u store.CardUpdate) (store.Card, error)
 	GetCard(id string) (store.Card, error)
+	GetCodebase(id string) (store.Codebase, error)
 	CreateColumn(boardID, name, stage string) (store.Column, error)
 	MoveCard(ctx context.Context, cardID, toColumnID string, beforeID, afterID *string) (store.Card, error)
+	RunsForCard(cardID string) ([]store.CardRun, error)
 }
 
 // phase is the model's lifecycle state.
@@ -130,7 +132,8 @@ type Model struct {
 
 	confirmQuit bool // q pressed with sessions attached: overlay open
 
-	form *form // n/N/m/e overlay open (T18); nil = board navigation active
+	form   *form       // n/N/m/e overlay open (T18); nil = board navigation active
+	detail *cardDetail // `d` detail pane open (T19); nil = closed
 
 	// pendingFocus is the card the cursor should land on once the post-mutation
 	// snapshot lands. The lists at submit time are stale (the fetch is in
@@ -387,7 +390,6 @@ func Run(svc Service) error {
 // ships each feature so the board never swallows a canonical key. The T18 keys
 // (n/N/m/e) are live since T18.
 const (
-	noteDetail    = "d: card detail view — T19"
 	noteSearch    = "/: search/filter — T20"
 	noteBoard     = "s: switch board — T20"
 	noteWorkspace = "w: switch workspace — T20"
@@ -411,6 +413,9 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// quitting.
 	if m.form != nil {
 		return m.formUpdate(msg)
+	}
+	if m.detail != nil {
+		return m.detailUpdate(msg)
 	}
 
 	switch {
@@ -478,8 +483,7 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.form = m.editCardForm(id)
 		return m, nil
 	case key.Matches(msg, km.Detail):
-		m.note = noteDetail
-		return m, nil
+		return m.openCardDetail()
 	case key.Matches(msg, km.Search):
 		m.note = noteSearch
 		return m, nil

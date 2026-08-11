@@ -1,14 +1,16 @@
 ---
 title: tui (internal/tui)
-description: The BubbleTea v2 board TUI — model/update/view loop, canonical keymap, five-column layout, card badges + live session markers, Enter-to-open and K-to-kill, and the T18 forms overlays (n new card, e edit, N new column, m move). Landed as real Go source in T16 (shell) + T17 (session markers) + T18 (forms).
+description: The BubbleTea v2 board TUI — model/update/view loop, canonical keymap, five-column layout, card badges + live session markers, Enter-to-open and K-to-kill, the T18 forms overlays (n new card, e edit, N new column, m move), and the T19 card detail pane (d). Landed as real Go source in T16 (shell) + T17 (session markers) + T18 (forms) + T19 (detail).
 type: module
 tags: [ wiki, module, tui, bubbletea ]
 ---
 ## Summary
 
-`internal/tui` is the BubbleTea v2 terminal UI: the board (its real surface) plus the four T18 form overlays, with the canonical §3.5 keymap, five-column layout, per-card agent badges and live session markers, and live Enter/K session control. It renders via LipGloss (`lipgloss.JoinHorizontal` column layout, kancli pattern) with each column a Bubbles v2 `list` and a custom card delegate. Forms (`n`/`e`/`N`/`m`) are real since T18 — centered bordered overlays with text and in-place cycle fields. Still bound-but-stubbed to a status-bar notice naming its task: the detail view (`d`), search, board/workspace switch and help (`/` `s` `w` `?`) (T19–T20). Spec: ADR-001 §3.1, §3.5; DESIGN-002 §14.
+`internal/tui` is the BubbleTea v2 terminal UI: the board (its real surface) plus the four T18 form overlays, with the canonical §3.5 keymap, five-column layout, per-card agent badges and live session markers, and live Enter/K session control. It renders via LipGloss (`lipgloss.JoinHorizontal` column layout, kancli pattern) with each column a Bubbles v2 `list` and a custom card delegate. Forms (`n`/`e`/`N`/`m`) are real since T18 — centered bordered overlays with text and in-place cycle fields. The **card detail pane (`d`) is real since T19** — a centered overlay showing the focused card's metadata, agent (with the `(default)` marker when the card's own agent is empty), codebase path, and its per-run history (start/end times, duration, changed-file count). Still bound-but-stubbed to a status-bar notice naming its task: search, board/workspace switch and help (`/` `s` `w` `?`) (T20). Spec: ADR-001 §3.1, §3.5; DESIGN-002 §14.
 
 ## Responsibilities
+
+- **Card detail pane (T19):** `d` opens a centered overlay (`cardDetail`) for the focused card — title, description, objective, acceptance criteria, labels, priority/stage badge, the resolved agent (`AgentOrDefault`, `(default)` suffix when the config default applied) with its codebase path (`GetCodebase`), and the run history (`RunsForCard`): each run as `MM-DD HH:MM → [dur]` with a `●`/`◉` live/open marker, `end`-timestamp or `open` for un-ended runs, and `n files changed` (or `no changes`). Owns every key while open: `esc`/`q` closes; all other keys are swallowed (the focus-preserving `detailUpdate` guard, mirroring the form overlay). The history is fetched per-open (never polled); a fetch error renders inline and `esc`/`q` still close. Rendered with a tolerant plain-text renderer (not full Glamour yet).
 
 - **Board shell (T16):** 5-column default (Backlog/To Do/In Progress/Review/Done) via `lipgloss.JoinHorizontal`; each column a `bubbles/list` with the custom card delegate. The lists keep only cursor + paging keys — the board owns h/l, `/`, q, `?` (each list's own bindings are disabled in `columnKeyMap`).
 - **Navigation:** `j/k` moves the cursor within the focused column, `h/l` moves column focus, pgup/pgdown/home/end scroll. Quit: `q` confirms when sessions are live, `Q` force-quits (sessions keep running detached).
@@ -35,6 +37,8 @@ type Service interface {
     GetCard(id string) (store.Card, error)                               // T18 forms
     CreateColumn(boardID, name, stage string) (store.Column, error)      // T18 forms
     MoveCard(ctx context.Context, cardID, toColumnID string, beforeID, afterID *string) (store.Card, error) // T18 forms
+    GetCodebase(id string) (store.Codebase, error)                       // T19 detail pane
+    RunsForCard(cardID string) ([]store.CardRun, error)                  // T19 detail pane
 }
 
 func New(svc Service) Model
@@ -48,16 +52,19 @@ The `Service` seam is the whole board surface: in production it is a [BoardServi
 
 ## Key files
 
-- `internal/tui/app.go` — `Model`, Init/Update/View loop, fetch + session messages (`fetchMsg`/`pollMsg`/`statusMsg`/`openMsg`/`killMsg`/`attachDoneMsg`), `keyPress` + `quitOverlay`, `startPoll`/`statusTickCmd`/`openSessionCmd`/`killCmd`/`attachCmd` and their `after*` handlers
+- `internal/tui/app.go` — `Model`, Init/Update/View loop, fetch + session messages (`fetchMsg`/`pollMsg`/`statusMsg`/`openMsg`/`killMsg`/`attachDoneMsg`), `keyPress` + `quitOverlay`, `startPoll`/`statusTickCmd`/`openSessionCmd`/`killCmd`/`attachCmd` and their `after*` handlers, the `detail` field + the `d` route in `keyPress` (checked after the form guard)
 - `internal/tui/keymap.go` — canonical §3.5 `KeyMap`, `defaultKeyMap`, per-column `columnKeyMap` (disables the list's own h/l, filter, quit, help hijack)
 - `internal/tui/board.go` — `cardItem`/`cardDelegate` render, `buildLists`, cursor-preserving `refreshMarkers`, `relayout`/`layout`/`statusBar`, `agentBadge`
 - `internal/tui/forms.go` — the T18 overlay: `form`/`field` (text + cycle), `formKeyMap` + per-input keymap (tab/up/down freed for the overlay), `openNewCardForm`/`openEditCardForm`/`openNewColumnForm`/`openMoveCardForm`, `cardInput`/`cardUpdate`/`columnInput` marshalling (nil vs `&""` vs value), `view` (`lipgloss.Place` centered box), the four submit msgs + `after*` handlers, `formUpdate` (the keyPress guard), and the styles
+- `internal/tui/card_detail.go` — the T19 overlay: `cardDetail` (card + agent/codebase + runs + `status`/`err`), `openCardDetail`, `detailUpdate` (the keyPress guard: esc/q close, else swallow), `detailView` (`lipgloss.Place` centered box), `renderMarkdown` (tolerant plain-text renderer), `detailRunLine`
+- `internal/tui/card_detail_test.go` — T19 acceptance: `d` opens the detail pane, `esc`/`q` close it (and only it — the underlying cursor/session state survives), fields render (metadata, agent `(default)` suffix, codebase path, run history with duration + file counts, open-run marker, error inline)
 - `internal/tui/app_test.go` — `fakeService` seam (incl. the five T18 write methods) + BubbleTea-driven tests (navigation, layout, quit confirm/force, badge/markers, completion toast, open/kill, attach handoff argv, poll re-arm)
 - `internal/tui/forms_test.go` — T18 acceptance: overlay opening, new-card submit + marshalling + refocus, agent nil-vs-pinned, validation, cancel, tab/shift+tab/left/right navigation, edit seeding + three-way update marshalling, edit agent reset to NULL, new-column, move picker routing + follow-the-card refocus, key capture (q types, j swallowed), poll-under-form, move-to-done routing, empty-column degradation
+- `internal/tui/app_test.go` — also carries the `fakeService` seam's T19 mirror (`GetCodebase`, `RunsForCard`, `runs`/`runsErr`/`runsCalled`) and the updated stub-key notice (now `/` `s` `w` `?`)
 
 ## Dependencies
 
-- [board](../modules/board.md) (selection, cards, columns, sessions — the whole Service), and transitively `store`, `session`, `config`, `agent`. External: BubbleTea v2 (`charm.land/bubbletea/v2` v2.0.7), Bubbles v2 (`charm.land/bubbles/v2` v2.1.1), LipGloss v2 (`charm.land/lipgloss/v2` v2.0.5) — `textinput` drives the form fields. Glamour is still future (card detail, T19).
+- [board](../modules/board.md) (selection, cards, columns, sessions — the whole Service), and transitively `store`, `session`, `config`, `agent`. External: BubbleTea v2 (`charm.land/bubbletea/v2` v2.0.7), Bubbles v2 (`charm.land/bubbles/v2` v2.1.1), LipGloss v2 (`charm.land/lipgloss/v2` v2.0.5) — `textinput` drives the form fields. Glamour was added as a dependency at T19 but the detail pane currently renders markdown with a tolerant plain-text renderer — the full Glamour path is a later enhancement.
 
 ## Participates in
 

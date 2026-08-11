@@ -58,6 +58,12 @@ type fakeService struct {
 	}
 	moveErr error
 	moveOut *store.Card
+
+	codebases  []store.Codebase
+	cbErr      error
+	runs       map[string][]store.CardRun
+	runsErr    error
+	runsCalled []string
 }
 
 func (f fakeService) ResolveSelection() (store.Workspace, store.Board, error) {
@@ -137,6 +143,23 @@ func (f fakeService) GetCard(id string) (store.Card, error) {
 		}
 	}
 	return store.Card{}, errors.New("card not found")
+}
+
+func (f fakeService) GetCodebase(id string) (store.Codebase, error) {
+	for _, cb := range f.codebases {
+		if cb.ID == id {
+			return cb, nil
+		}
+	}
+	return store.Codebase{}, errors.New("codebase not found")
+}
+
+func (f *fakeService) RunsForCard(cardID string) ([]store.CardRun, error) {
+	f.runsCalled = append(f.runsCalled, cardID)
+	if f.runsErr != nil {
+		return nil, f.runsErr
+	}
+	return f.runs[cardID], nil
 }
 
 func (f *fakeService) CreateColumn(boardID, name, stage string) (store.Column, error) {
@@ -363,11 +386,11 @@ func TestInitErrRoutesToErrorView(t *testing.T) {
 }
 
 // TestStubKeysSetNotice verifies a stubbed canonical key names its task in
-// the status bar. K/enter are live since T17, n/N/m/e since T18 — each is
-// covered by its own tests.
+// the status bar. K/enter are live since T17, n/N/m/e since T18, d since T19
+// — each is covered by its own tests.
 func TestStubKeysSetNotice(t *testing.T) {
 	m := readyModel(t, newBoardService())
-	for _, kc := range []rune{'d', '/', 's', 'w', '?'} {
+	for _, kc := range []rune{'/', 's', 'w', '?'} {
 		m, _ = press(t, m, kc)
 		if m.note == "" {
 			t.Errorf("key %c produced no stub notice", kc)
