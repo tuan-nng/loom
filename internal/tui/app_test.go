@@ -64,6 +64,13 @@ type fakeService struct {
 	runs       map[string][]store.CardRun
 	runsErr    error
 	runsCalled []string
+
+	workspaces   []store.Workspace
+	boards       []store.Board
+	showBoardID  string
+	showBoardErr error
+	switchWsID   string
+	switchWsErr  error
 }
 
 func (f fakeService) ResolveSelection() (store.Workspace, store.Board, error) {
@@ -190,6 +197,40 @@ func (f *fakeService) MoveCard(_ context.Context, cardID, toColumnID string, bef
 		}
 	}
 	return store.Card{}, errors.New("card not found")
+}
+
+func (f fakeService) ListBoards(string) ([]store.Board, error) {
+	return f.boards, f.err
+}
+
+func (f fakeService) ListWorkspaces() ([]store.Workspace, error) {
+	return f.workspaces, f.err
+}
+
+func (f *fakeService) ShowBoard(boardID string) (store.Board, error) {
+	f.showBoardID = boardID
+	if f.showBoardErr != nil {
+		return store.Board{}, f.showBoardErr
+	}
+	for _, b := range f.boards {
+		if b.ID == boardID {
+			return b, nil
+		}
+	}
+	return f.board, nil
+}
+
+func (f *fakeService) SwitchWorkspace(workspaceID string) (store.Workspace, error) {
+	f.switchWsID = workspaceID
+	if f.switchWsErr != nil {
+		return store.Workspace{}, f.switchWsErr
+	}
+	for _, w := range f.workspaces {
+		if w.ID == workspaceID {
+			return w, nil
+		}
+	}
+	return f.ws, nil
 }
 
 // execMsg runs a cmd and returns the msg it produces. Only safe for the plain
@@ -385,16 +426,211 @@ func TestInitErrRoutesToErrorView(t *testing.T) {
 	}
 }
 
-// TestStubKeysSetNotice verifies a stubbed canonical key names its task in
-// the status bar. K/enter are live since T17, n/N/m/e since T18, d since T19
-// — each is covered by its own tests.
-func TestStubKeysSetNotice(t *testing.T) {
+// TestSearchFiltersBoard walks `/`: the search overlay opens, typing an
+// enter-committed query narrows the board to title/description matches (same
+// semantics as `card list --search`), the status bar shows the active filter,
+// and esc cancels without changing the filter.
+func TestSearchFiltersBoard(t *testing.T) {
+	svc := newBoardService()
+	svc.cards = []store.Card{
+		{ID: "k1", ColumnID: "c-blog", Title: "buy milk"},
+		{ID: "k2", ColumnID: "c-todo", Title: "milk run"},
+		{ID: "k3", ColumnID: "c-todo", Title: "wash car"},
+		{ID: "k4", ColumnID: "c-blog", Title: "alpha", Description: strp("grocery errand")},
+	}
+	m := readyModel(t, svc)
+
+	m, _ = press(t, m, '/')
+	if !m.searching {
+		t.Fatal("/ did not open search")
+	}
+	content := plain(m.View().Content)
+	if !strings.Contains(content, "enter filter") {
+		t.Errorf("search overlay missing hint:\n%s", content)
+	}
+
+	// Type and commit "milk": only the two milk cards survive, the count
+	// headers drop the others.
+	m, _ = typeText(t, m, "milk")
+	m, _ = press(t, m, '\r')
+	if m.searching || m.searchQuery != "milk" {
+		t.Fatalf("searching=%v query=%q, want closed with milk", m.searching, m.searchQuery)
+	}
+	content = plain(m.View().Content)
+	if !strings.Contains(content, "buy milk") || !strings.Contains(content, "milk run") {
+		t.Errorf("filtered board missing matching card:\n%s", content)
+	}
+	if strings.Contains(content, "wash car") || strings.Contains(content, "alpha") {
+		t.Errorf("filtered board still shows non-matching card:\n%s", content)
+	}
+	if !strings.Contains(content, "/milk") {
+		t.Errorf("status bar missing filter indicator:\n%s", content)
+	}
+
+	// Esc cancels: reopening and pressing esc leaves the filter untouched.
+	m, _ = press(t, m, '/')
+	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.searching || m.searchQuery != "milk" {
+		t.Errorf("esc cancel: searching=%v query=%q, want closed with milk kept", m.searching, m.searchQuery)
+	}
+}
+
+// TestSearchMatchesDescription confirms the filter also matches the card
+// description field, mirroring `card list --search`.
+func TestSearchMatchesDescription(t *testing.T) {
+	svc := newBoardService()
+	svc.cards = []store.Card{
+		{ID: "k1", ColumnID: "c-blog", Title: "alpha", Description: strp("grocery errand")},
+		{ID: "k2", ColumnID: "c-blog", Title: "beta"},
+	}
+	m := readyModel(t, svc)
+
+	m, _ = press(t, m, '/')
+	m, _ = typeText(t, m, "grocery")
+	m, _ = press(t, m, '\r')
+	content := plain(m.View().Content)
+	if !strings.Contains(content, "alpha") {
+		t.Errorf("title-only board lost description match:\n%s", content)
+	}
+	if strings.Contains(content, "beta") {
+		t.Errorf("description filter leaked a non-matching card:\n%s", content)
+	}
+}
+
+// TestSearchEmptyCommitClearsFilter: committing an empty query (the search
+// overlay reopens pre-filled, so clear it with backspaces) restores the full
+// board.
+func TestSearchEmptyCommitClearsFilter(t *testing.T) {
+	svc := newBoardService()
+	svc.cards = []store.Card{{ID: "k1", ColumnID: "c-blog", Title: "alpha"}}
+	m := readyModel(t, svc)
+
+	m, _ = press(t, m, '/')
+	m, _ = typeText(t, m, "alpha")
+	m, _ = press(t, m, '\r')
+	if m.searchQuery != "alpha" {
+		t.Fatalf("query = %q, want alpha", m.searchQuery)
+	}
+
+	m, _ = press(t, m, '/')
+	for range "alpha" {
+		m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	m, _ = press(t, m, '\r')
+	if m.searchQuery != "" {
+		t.Errorf("empty commit kept query %q, want cleared", m.searchQuery)
+	}
+	if got := plain(m.View().Content); !strings.Contains(got, "alpha") {
+		t.Errorf("cleared filter still hides alpha:\n%s", got)
+	}
+}
+
+// TestHelpOverlayRendersAndCloses: `?` renders the canonical §3.5 keymap fram
+// the board; any key closes it.
+func TestHelpOverlayRendersAndCloses(t *testing.T) {
 	m := readyModel(t, newBoardService())
-	for _, kc := range []rune{'/', 's', 'w', '?'} {
-		m, _ = press(t, m, kc)
-		if m.note == "" {
-			t.Errorf("key %c produced no stub notice", kc)
+	m, _ = press(t, m, '?')
+	if !m.help {
+		t.Fatal("? did not open the help overlay")
+	}
+	content := plain(m.View().Content)
+	for _, want := range []string{"switch board", "switch workspace", "search/filter cards", "kill session"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("help overlay missing %q:\n%s", want, content)
 		}
+	}
+
+	m, _ = press(t, m, 'x')
+	if m.help {
+		t.Error("help overlay did not close on a key")
+	}
+	content = plain(m.View().Content)
+	if strings.Contains(content, "Help — loom keymap") {
+		t.Errorf("help overlay still rendered after closing:\n%s", content)
+	}
+	if !strings.Contains(content, "loom › board") {
+		t.Errorf("clicking away should restore the board:\n%s", content)
+	}
+}
+
+// TestBoardSwitchPickerAndSubmit walks `s`: the picker opens with the current
+// workspace's boards, cycling right selects the second board, and submit
+// persists the selection through ShowBoard then re-fetches.
+func TestBoardSwitchPickerAndSubmit(t *testing.T) {
+	svc := newBoardService()
+	svc.boards = []store.Board{
+		{ID: "b1", WorkspaceID: "w1", Name: "board"},
+		{ID: "b2", WorkspaceID: "w1", Name: "board2"},
+	}
+	m := readyModel(t, svc)
+
+	m, cmd := press(t, m, 's')
+	msg := execMsg(t, cmd).(boardsMsg)
+	if msg.err != nil {
+		t.Fatalf("boardsMsg err = %v", msg.err)
+	}
+	m, _ = update(t, m, msg)
+	if m.form == nil || m.form.kind != formSwitchBoard {
+		t.Fatalf("s did not open the board-switch form, form=%v", m.form)
+	}
+	if got := plain(m.View().Content); !strings.Contains(got, "Switch Board") {
+		t.Errorf("switch-board view missing title:\n%s", got)
+	}
+
+	// Cycle right to board2 and submit.
+	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m, cmd = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	msg2 := execMsg(t, cmd).(boardSwitchedMsg)
+	if msg2.err != nil {
+		t.Fatalf("boardSwitchedMsg err = %v", msg2.err)
+	}
+	if svc.showBoardID != "b2" {
+		t.Errorf("ShowBoard called with %q, want b2", svc.showBoardID)
+	}
+	m, cmd = update(t, m, msg2)
+	if !strings.Contains(m.note, "switched board") {
+		t.Errorf("note = %q, want switch toast", m.note)
+	}
+	if cmd == nil {
+		t.Error("afterBoardSwitched returned nil cmd, want re-fetch")
+	}
+}
+
+// TestWorkspaceSwitchPickerAndSubmit walks `w`: the picker opens with all
+// workspaces and submit persists through SwitchWorkspace then re-fetches.
+func TestWorkspaceSwitchPickerAndSubmit(t *testing.T) {
+	svc := newBoardService()
+	svc.workspaces = []store.Workspace{
+		{ID: "w1", Name: "loom"},
+		{ID: "w2", Name: "other"},
+	}
+	m := readyModel(t, svc)
+
+	m, cmd := press(t, m, 'w')
+	msg := execMsg(t, cmd).(workspacesMsg)
+	m, _ = update(t, m, msg)
+	if m.form == nil || m.form.kind != formSwitchWorkspace {
+		t.Fatalf("w did not open the workspace-switch form, form=%v", m.form)
+	}
+	if got := plain(m.View().Content); !strings.Contains(got, "Switch Workspace") {
+		t.Errorf("switch-workspace view missing title:\n%s", got)
+	}
+
+	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m, cmd = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	msg2 := execMsg(t, cmd).(workspaceSwitchedMsg)
+	if msg2.err != nil {
+		t.Fatalf("workspaceSwitchedMsg err = %v", msg2.err)
+	}
+	if svc.switchWsID != "w2" {
+		t.Errorf("SwitchWorkspace called with %q, want w2", svc.switchWsID)
+	}
+	m, cmd = update(t, m, msg2)
+	if !strings.Contains(m.note, "switched workspace") {
+		t.Errorf("note = %q, want switch toast", m.note)
+	}
+	if cmd == nil {
+		t.Error("afterWorkspaceSwitched returned nil cmd, want re-fetch")
 	}
 }
 
