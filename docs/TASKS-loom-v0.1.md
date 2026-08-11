@@ -2,13 +2,13 @@
 
 **Source of truth:** `DESIGN-002-loom-multi-agent.md` (implementation blueprint),
 `ADR-001` (base architecture), `ADR-002` (multi-agent, to be adopted at the end).
-The repo is docs-only today — every task below builds from scratch.
+All tasks are implemented; the TUI (T16-T20) was the last lane to land. Every ADR-001 §3.5 keybinding is now live — the `mapped or stubbed` warning is retired.
 
 **How to use:** each task is one bounded deliverable sized for a single
 `feature-dev` run. The task is the *spec*; the cited DESIGN/ADR sections are the
-*authoritative detail*. A task is done when its code compiles, its tests pass,
-and its Acceptance items are green. Tasks are dependency-ordered; the lanes in
-§"Execution order" run in parallel.
+*authoritative detail*. A task was done when its code compiled, its tests passed,
+and its Acceptance items were green. Tasks were dependency-ordered; the lanes in
+§"Execution order" ran in parallel.
 
 **Conventions every task follows:**
 - Module `loom`, Go 1.23+, layout per DESIGN-002 §4.2. No new dependencies
@@ -39,9 +39,9 @@ T0  (feasibility residual)     — can run any time, independent
         (needs T9, T11, T10, T3, T2, T8)
    └── T13 BoardService (needs T12, T7, T8)
         ├── T14 CLI router ──► T15 CLI cards ──► T16 CLI session
-        └── T17 TUI shell ──► T18 TUI board ──► T19 TUI forms ──► T20 TUI detail ──► T21 TUI extras
-   └── T22 integration tests (needs T12)
-   └── T23 docs adoption (needs everything green)
+         └── T16 TUI shell ──► T17 TUI session ──► T18 TUI forms ──► T19 TUI detail ──► T20 TUI extras
+   └── T21 integration tests (needs T12)
+   └── T22 docs adoption (needs everything green)
 ```
 
 ---

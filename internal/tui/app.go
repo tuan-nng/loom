@@ -1,9 +1,7 @@
 // Package tui is the BubbleTea terminal UI (ADR-001 §5, DESIGN-002 §4.1). It
 // renders the current board's five columns as a row of bubbles lists and owns
-// the canonical §3.5 keymap: every key is bound here or routed to a stub that
-// names the task shipping it, so the board is fully navigable and keyboard
-// halts are deliberate. The service seam lets tests fake the whole board
-// surface without a store or tmux.
+// the canonical §3.5 keymap with every key live. The service seam lets tests
+// fake the whole board surface without a store or tmux.
 package tui
 
 import (
@@ -166,7 +164,7 @@ type Model struct {
 
 	width, height int
 
-	note string // status-bar toast (stub key hints, session notices)
+	note string // status-bar toast (session notices, switch notifications)
 
 	confirmQuit bool // q pressed with sessions attached: overlay open
 
