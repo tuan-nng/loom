@@ -64,6 +64,17 @@ type fakeService struct {
 	runs       map[string][]store.CardRun
 	runsErr    error
 	runsCalled []string
+
+	boards        []store.Board
+	workspaces    []store.Workspace
+	boardsErr     error
+	workspacesErr error
+	showBoardID   string
+	showBoardErr  error
+	showBoardOut  *store.Board
+	switchWsID    string
+	switchWsErr   error
+	switchWsOut   *store.Workspace
 }
 
 func (f fakeService) ResolveSelection() (store.Workspace, store.Board, error) {
@@ -190,6 +201,46 @@ func (f *fakeService) MoveCard(_ context.Context, cardID, toColumnID string, bef
 		}
 	}
 	return store.Card{}, errors.New("card not found")
+}
+
+func (f fakeService) ListBoards(string) ([]store.Board, error) {
+	return f.boards, f.boardsErr
+}
+
+func (f fakeService) ListWorkspaces() ([]store.Workspace, error) {
+	return f.workspaces, f.workspacesErr
+}
+
+func (f *fakeService) ShowBoard(id string) (store.Board, error) {
+	f.showBoardID = id
+	if f.showBoardErr != nil {
+		return store.Board{}, f.showBoardErr
+	}
+	if f.showBoardOut != nil {
+		return *f.showBoardOut, nil
+	}
+	for _, b := range f.boards {
+		if b.ID == id {
+			return b, nil
+		}
+	}
+	return store.Board{}, errors.New("board not found")
+}
+
+func (f *fakeService) SwitchWorkspace(id string) (store.Workspace, error) {
+	f.switchWsID = id
+	if f.switchWsErr != nil {
+		return store.Workspace{}, f.switchWsErr
+	}
+	if f.switchWsOut != nil {
+		return *f.switchWsOut, nil
+	}
+	for _, ws := range f.workspaces {
+		if ws.ID == id {
+			return ws, nil
+		}
+	}
+	return store.Workspace{}, errors.New("workspace not found")
 }
 
 // execMsg runs a cmd and returns the msg it produces. Only safe for the plain
@@ -382,19 +433,6 @@ func TestInitErrRoutesToErrorView(t *testing.T) {
 	m, _ = m.Update(fetchMsg{err: board.ErrNotInitialized})
 	if got := plain(m.View().Content); !strings.Contains(got, "run loom init") {
 		t.Errorf("error view = %q, want 'run loom init' hint", got)
-	}
-}
-
-// TestStubKeysSetNotice verifies a stubbed canonical key names its task in
-// the status bar. K/enter are live since T17, n/N/m/e since T18, d since T19
-// — each is covered by its own tests.
-func TestStubKeysSetNotice(t *testing.T) {
-	m := readyModel(t, newBoardService())
-	for _, kc := range []rune{'/', 's', 'w', '?'} {
-		m, _ = press(t, m, kc)
-		if m.note == "" {
-			t.Errorf("key %c produced no stub notice", kc)
-		}
 	}
 }
 

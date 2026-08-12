@@ -6,8 +6,8 @@ import (
 )
 
 // KeyMap is the canonical board keymap (ADR-001 §3.5). Every key in the table
-// is present; those whose feature lands in a later task bind to a status-bar
-// stub that names it, so the board never swallows a key silently.
+// is present; all features are live (sessions since T17, forms/move/edit since
+// T18, detail since T19, search/switch/help since T20).
 type KeyMap struct {
 	CursorUp   key.Binding // j/k, ↑/↓ — focused column's cards
 	CursorDown key.Binding

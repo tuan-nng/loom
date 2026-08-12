@@ -14,7 +14,8 @@ import (
 	"loom/internal/store"
 )
 
-// formKind discriminates the four T18 overlays (ADR-001 §3.5: n/N/m/e).
+// formKind discriminates the overlays (ADR-001 §3.5): the four T18 forms
+// (n/N/m/e), the T20 / search, and the T20 s/w switch pickers.
 type formKind int
 
 const (
@@ -22,6 +23,9 @@ const (
 	formEditCard
 	formNewColumn
 	formMoveCard
+	formSearch
+	formBoardSwitch
+	formWorkspaceSwitch
 )
 
 // fieldKind discriminates the two interactive field behaviors: a text field
@@ -438,6 +442,26 @@ func (f *form) submit() tea.Cmd {
 		return func() tea.Msg {
 			card, cerr := f.svc.MoveCard(context.Background(), id, to, nil, nil)
 			return cardMovedMsg{card: card, err: cerr}
+		}
+	case formSearch:
+		// Empty query is a valid commit: it clears the active filter.
+		f.closed = true
+		return func() tea.Msg {
+			return searchMsg{query: f.fields[0].input.Value()}
+		}
+	case formBoardSwitch:
+		f.closed = true
+		id := f.fields[0].selectedValue()
+		return func() tea.Msg {
+			b, serr := f.svc.ShowBoard(id)
+			return boardSwitchedMsg{board: b, err: serr}
+		}
+	case formWorkspaceSwitch:
+		f.closed = true
+		id := f.fields[0].selectedValue()
+		return func() tea.Msg {
+			ws, serr := f.svc.SwitchWorkspace(id)
+			return workspaceSwitchedMsg{ws: ws, err: serr}
 		}
 	}
 	return nil

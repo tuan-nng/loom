@@ -68,7 +68,7 @@ const (
 // current status snapshot (the poll refreshes them in place).
 func (m *Model) buildLists() {
 	cardsByCol := make(map[string][]list.Item, len(m.columns))
-	for _, c := range m.cards {
+	for _, c := range m.visibleCards() {
 		cardsByCol[c.ColumnID] = append(cardsByCol[c.ColumnID], cardItem{
 			card:     c,
 			badge:    agentBadge(c.AgentOrDefault(m.defaultAgent)),
@@ -194,6 +194,9 @@ func (m Model) layout() string {
 	if m.detail != nil {
 		return m.detailView()
 	}
+	if m.help != nil {
+		return m.helpView()
+	}
 	return out
 }
 
@@ -216,7 +219,7 @@ func (m Model) listCount(i int) int {
 		return 0
 	}
 	n := 0
-	for _, c := range m.cards {
+	for _, c := range m.visibleCards() {
 		if c.ColumnID == m.columns[i].ID {
 			n++
 		}

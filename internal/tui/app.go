@@ -49,6 +49,10 @@ type Service interface {
 	CreateColumn(boardID, name, stage string) (store.Column, error)
 	MoveCard(ctx context.Context, cardID, toColumnID string, beforeID, afterID *string) (store.Card, error)
 	RunsForCard(cardID string) ([]store.CardRun, error)
+	ListBoards(workspaceID string) ([]store.Board, error)
+	ShowBoard(boardID string) (store.Board, error)
+	ListWorkspaces() ([]store.Workspace, error)
+	SwitchWorkspace(workspaceID string) (store.Workspace, error)
 }
 
 // phase is the model's lifecycle state.
@@ -117,6 +121,7 @@ type Model struct {
 	board   store.Board
 	columns []store.Column
 	cards   []store.Card
+	search  string      // active / filter (case-insensitive title/description)
 	lists   []list.Model // one per column, same order as columns
 	focus   int          // index of the focused column
 
@@ -132,8 +137,9 @@ type Model struct {
 
 	confirmQuit bool // q pressed with sessions attached: overlay open
 
-	form   *form       // n/N/m/e overlay open (T18); nil = board navigation active
-	detail *cardDetail // `d` detail pane open (T19); nil = closed
+	form    *form        // n/N/m/e/s/w overlay open (T18/T20); nil = board navigation active
+	detail  *cardDetail  // `d` detail pane open (T19); nil = closed
+	help    *helpOverlay // `?` keymap overlay open (T20); nil = closed
 
 	// pendingFocus is the card the cursor should land on once the post-mutation
 	// snapshot lands. The lists at submit time are stale (the fetch is in
@@ -210,6 +216,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterColumnCreated(msg)
 	case cardMovedMsg:
 		return m.afterCardMoved(msg)
+	case searchMsg:
+		return m.afterSearch(msg)
+	case boardSwitchedMsg:
+		return m.afterBoardSwitched(msg)
+	case workspaceSwitchedMsg:
+		return m.afterWorkspaceSwitched(msg)
 	case tea.KeyPressMsg:
 		if m.phase != phaseReady {
 			return m, nil
@@ -237,10 +249,19 @@ func (m Model) applyFetch(msg fetchMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.phase = phaseReady
+	oldBoard := m.board.ID
 	m.ws, m.board = msg.ws, msg.board
 	m.columns = msg.cols
 	m.cards = msg.cards
 	m.status = msg.status
+	if oldBoard != m.board.ID {
+		// Board transition (s/w switch or any resolve that lands elsewhere):
+		// kill-suppression and refocus intent are board-scoped, so a stale
+		// entry from the previous board must not suppress a legitimate
+		// natural-end toast or land the cursor on a foreign card.
+		m.killedByUser = make(map[string]bool)
+		m.pendingFocus = ""
+	}
 	m.focus = 0
 	m.buildLists()
 	m.relayout()
@@ -386,20 +407,10 @@ func Run(svc Service) error {
 	return err
 }
 
-// noteT19/20 hold the stub notices wired in keyPress; they name the task that
-// ships each feature so the board never swallows a canonical key. The T18 keys
-// (n/N/m/e) are live since T18.
-const (
-	noteSearch    = "/: search/filter — T20"
-	noteBoard     = "s: switch board — T20"
-	noteWorkspace = "w: switch workspace — T20"
-	noteHelp      = "?: help overlay — T20"
-)
-
 // keyPress handles one key against the canonical §3.5 keymap. Navigation is
-// live (j/k within the focused column, h/l across columns, paging); feature
-// keys set a status-bar stub notice. Quit confirms when sessions live; force
-// quit always exits (sessions keep running detached).
+// live (j/k within the focused column, h/l across columns, paging); /, s, w,
+// ? are live since T20. Quit confirms when sessions live; force quit always
+// exits (sessions keep running detached).
 func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	km := defaultKeyMap()
 
@@ -416,6 +427,9 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.detail != nil {
 		return m.detailUpdate(msg)
+	}
+	if m.help != nil {
+		return m.helpUpdate(msg)
 	}
 
 	switch {
@@ -485,17 +499,13 @@ func (m Model) keyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, km.Detail):
 		return m.openCardDetail()
 	case key.Matches(msg, km.Search):
-		m.note = noteSearch
-		return m, nil
+		return m.openSearch()
 	case key.Matches(msg, km.Board):
-		m.note = noteBoard
-		return m, nil
+		return m.openBoardPicker()
 	case key.Matches(msg, km.Workspace):
-		m.note = noteWorkspace
-		return m, nil
+		return m.openWorkspacePicker()
 	case key.Matches(msg, km.Help):
-		m.note = noteHelp
-		return m, nil
+		return m.openHelp()
 	}
 	return m, nil
 }
