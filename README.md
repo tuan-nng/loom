@@ -63,6 +63,65 @@ loom card close <id>           # kill the session, finalize the trace
 loom status                    # board, live sessions, recent runs
 ```
 
+## Using the loom UI
+
+Bare `loom` launches the board TUI when stdout is an interactive terminal;
+piped/non-interactive invocations print help instead, so scripts get a
+deterministic surface.
+
+### Layout
+
+The screen is a row of columns — one per board stage (Backlog / To Do / In
+Progress / Review / Done by default) — each headed by its name and card
+count, with a one-line status bar pinned to the bottom (`workspace › board`
+on the left, a session summary or the last action's note on the right). Each
+card row shows an agent badge (`[cl]` claude, `[oc]` opencode) and a live
+session marker: `●` running, `◉` attached, nothing for an idle card.
+
+### Keymap
+
+One table governs the board, the card-detail pane, and the help overlay —
+every key mirrors a CLI command, so nothing here is TUI-exclusive:
+
+| Key | Action | CLI equivalent |
+|-----|--------|----------------|
+| `j`/`k`, `↓`/`↑` | Focus previous/next card | — |
+| `h`/`l`, `←`/`→` | Focus previous/next column | — |
+| `Enter` | Open card: create-if-needed + attach to its tmux session | `loom card open <id>` |
+| `K` | Kill the card's session and finalize its trace | `loom card close <id>` |
+| `n` | New card (title/board/column/agent form) | `loom card add <title>` |
+| `N` | New column | `loom column add <name>` |
+| `m` | Move card (column picker); moving into a `done`-stage column auto-kills the session | `loom card move <id> <column>` |
+| `d` | Card detail: metadata, resolved agent, codebase path, run history | `loom card show <id>` |
+| `e` | Edit card fields | `loom card update <id>` |
+| `/` | Search/filter cards by title or description | `loom card list --search <q>` |
+| `s` | Switch board (within the current workspace) | `loom board show <name>` |
+| `w` | Switch workspace | `loom workspace switch <name>` |
+| `?` | Help overlay (renders this same table) | `loom help` |
+| `q`, `Ctrl+c` | Quit — asks to confirm if any session is attached | — |
+| `Q` | Force quit — sessions keep running detached | — |
+
+Overlays (forms, card detail, help, the quit confirm) own every keypress
+while open; `esc` (also `q` for detail/help) closes them without side
+effects.
+
+### Attaching and detaching
+
+`Enter` ensures the card's tmux session exists and hands the terminal to it —
+you're now talking directly to the agent. loom runs its own private tmux
+server (`-L loom`, `prefix C-a`) so it never collides with your own tmux
+config; detach with `Ctrl-a d` (the standard tmux detach binding) to return
+to the board and leave the agent running. A detached session survives loom
+exiting entirely — the next `loom` invocation rediscovers it and shows its
+`●`/`◉` marker again.
+
+### What updates live vs. on refresh
+
+The board polls session status every 2s, so `●`/`◉` markers and the status
+bar's running/attached counts update on their own. Card/column data itself
+is not polled — mutations made by another `loom`/CLI process while the TUI is
+open only appear after switching boards (`s`) or restarting `loom`.
+
 ## Configuration
 
 `loom init` seeds `~/.config/loom/config.toml` (`$XDG_CONFIG_HOME/loom` on
