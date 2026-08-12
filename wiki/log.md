@@ -7,6 +7,13 @@ description: Append-only audit trail of wiki generation and refresh runs.
 
 Append-only audit trail. Add one dated entry per generation or refresh run, recording the profile, the `source_commit` it was anchored to, and the coverage. The codebase-wiki skill describes the entry shape.
 
+## 2026-08-12: refresh
+
+- Profile: internal/standard
+- source_commit: f24463f (was 5b99765)
+- Coverage: T20 TUI extras (search, board/workspace switch, help overlay) landed as real Go source since the last stamp — `internal/tui/search.go` (the `/` overlay: `searchMsg`, `filterCards`/`visibleCards` — case-insensitive title/description substring mirroring `loom card list --search` — `openSearch` seeded with the active filter, `afterSearch` applying it client-side with no re-fetch; an empty submit clears the filter, esc preserves the prior filter, later re-fetches preserve it), `internal/tui/switch.go` (the `s`/`w` pickers: `switchForm` as a single cycle field seeded via `indexOf`, `openBoardPicker`/`openWorkspacePicker` doing synchronous list reads that degrade to a status-bar notice on error/empty, submit routing through `ShowBoard`/`SwitchWorkspace` — persisting `{workspace, board}` / clearing the board per ADR-001 §6 — folded by `afterBoardSwitched`/`afterWorkspaceSwitched` into a re-fetch + toast), `internal/tui/help.go` (the `?` overlay: `helpOverlay` with esc/q close + full key swallowing, `helpRows`/`keyNames` derived from `defaultKeyMap()` so the help can never drift from the bindings), plus the `applyFetch` board-transition reset of kill-suppression and `pendingFocus` (both board-scoped). Widened the `tui.Service` seam with `ListBoards`/`ShowBoard`/`ListWorkspaces`/`SwitchWorkspace` (auto-satisfied by the embedded `*board.Service`); `fakeService` mirrors all four. Tests: search (narrows the board + shrinks header counts, description/case matching, esc restores the filter, empty clears, survives refetch), switch (open/cycle/submit + re-fetch, esc cancels without a service write, list-error/empty degrade to a notice, submit-error toasts, board-scoped kill-suppression cleared on transition), help (renders the canonical row set, esc/q close, keys swallowed) — replacing the old `TestStubKeysSetNotice`. Full `go build`/`go vet`/`go test ./...` green, TUI ~87% coverage. Updated the tui module page (summary, responsibilities, widened Service, the search.go/switch.go/help.go + test key files, duplicate app_test bullet retired), the implementation-state framing in Overview + Architecture Overview (no TUI keys left stubbed), and re-stamped source_commit.
+- Pages: [Overview](./OVERVIEW.md), [Architecture Overview](./architecture/overview.md), [tui](./modules/tui.md)
+
 ## 2026-08-11: refresh
 
 - Profile: internal/standard
