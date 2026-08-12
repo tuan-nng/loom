@@ -1,6 +1,6 @@
 # ADR-002: Multi-Agent Support — opencode as a Second Coding Agent
 
-**Status:** Proposed
+**Status:** Adopted
 **Date:** 2026-08-09
 **Author:** MiMo Agent
 **Area:** Architecture, Terminal UI, Agent Abstraction
@@ -13,6 +13,7 @@
 |------|--------|
 | 2026-08-09 | Pre-adoption design review (`./DESIGN-002-loom-multi-agent.md`). **Verified facts corrected** (§1.2): `opencode run --interactive` **is** a valid interactive split-footer mode in v1.18.15 (probe: accepted, enters the REPL) — the ADR's original claim that it is rejected is wrong; the rejected combination is `run --mini` (its error message is the one originally quoted). Phase 0 also resolved the auto-submit question: `opencode --mini --prompt '<ctx>'` **auto-submits**, and the mini REPL **stays alive after a turn** (session does not exit on idle) — so the §4.2 `SendKeys` default is `""`, not `"Enter"`. **Driver signatures corrected** (§3.1): `Resolve(cfg *Config)` (the binary is per-agent config) and `Launch(exe string, card Card, cfg *Config)` (avoids a double `LookPath`; `argv[0] = exe`). Migration (§6) verified legal against SQLite (`ADD COLUMN ... CHECK` + `DROP COLUMN`). |
 | 2026-08-09 | Code-review challenge (DESIGN-002) closed five findings, refining the §3.1 ensure sequence at the blueprint level (no driver/contract change): **(1)** `ensure` records the run **after** the startup probe passes (baseline snapshotted before launch, `trace_start` written after) — a failed launch writes no trace row at all, closing the race where a concurrent reconcile-on-startup could finalize a never-launched session as a completed run; **(2)** `ensure` kills any session it created on every post-creation error path, so a session is never left alive without its `trace_start`; **(3)** the startup probe captures pane text **during** the probe window (after absence is known, the `-L loom` server may already be gone); **(4)** agent-name validation lives in `agent.Validate(cfg)`, called at startup — `config` stays a leaf (no `config → agent` import cycle); **(5)** `interface = "full"` is hard-gated on the Phase 0 full-TUI auto-submit probe until confirmed. Full detail in DESIGN-002 §10.2, §11, §15, §16. |
+| 2026-08-12 | **Adopted.** T0's residual Phase 0 question — full-TUI `--prompt` auto-submit — is **CONFIRMED** (probe transcript: `docs/PROBE-full-tui.md`); the `interface = "full"` gate is lifted, `agent.Validate` accepts both `"mini"` and `"full"`, and the opencode driver ships both argv paths (§4.2). Implementation (T1–T21) is complete: config, the driver contract, both drivers, the `cards.agent` migration, `SessionManager`, `BoardService`, the CLI `--agent` surface, and the TUI badge/picker/detail field all ship per this ADR and `DESIGN-002-loom-multi-agent.md`. The regression canary (auto-submit still works, both interfaces — §10 here, DESIGN-002 §16) is automated as `TestOpencodeFullTUIAutoSubmitCanary` (`internal/session`, opt-in via `LOOM_TEST_LIVE_OPENCODE=1` — it makes a live opencode/LLM call). §8 below is updated with this finding, `DESIGN-002-loom-multi-agent.md` §15 already carries it, and the stale `run --interactive rejected` claim in §12 is corrected as part of this pass. |
 
 ---
 
@@ -53,10 +54,9 @@ in ADR-001 §3.2.
   pane, which works while attached.
 - `--mini` requires a TTY stdout; a tmux session pane is a PTY, so this holds.
 - `--prompt` sets the TUI's input value (`route.prompt` → `r.set(...)`); **it
-  auto-submits in mini mode** — verified by probe (2026-08-09, v1.18.15), and
-  the mini REPL stays alive after a turn. Residual: full-TUI (`interface =
-  "full"`) auto-submit is assumed to share this and is confirmed in Phase 0
-  (§11).
+  auto-submits in both mini and full-TUI mode** — verified by probe
+  (2026-08-09, v1.18.15; the full-TUI leg is T0, transcript
+  `docs/PROBE-full-tui.md`), and both stay alive after a turn.
 
 ### 1.3 Guiding Principles Affected
 
@@ -223,13 +223,14 @@ Default interface is the minimal split-footer REPL (`--mini`), selected via
   session, identical to claude. The 2s poll and reconcile-on-startup need no
   change.
 - **Auto-submit caveat (resolved).** opencode's `--prompt` sets the input
-  value and **auto-submits it in mini mode** — verified by probe (2026-08-09,
-  v1.18.15), and the mini REPL stays alive after a turn. The driver ships with
-  `SendKeys = ""`. The `SendKeys` field is retained on the contract: the
-  full-TUI (`interface = "full"`) auto-submit is assumed to share this
-  behavior but is confirmed in Phase 0 (§11), and the field absorbs a
-  prefill-only regression in a future opencode version. The failure mode
-  remains visible (the agent waits at its prompt), never a silently
+  value and **auto-submits it in both mini and full-TUI mode** — verified by
+  probe (2026-08-09, v1.18.15; full-TUI confirmed in T0,
+  `docs/PROBE-full-tui.md`), and both stay alive after a turn. The driver
+  ships with `SendKeys = ""` for both. The `SendKeys` field is retained on the
+  contract so the field absorbs a prefill-only regression in a future
+  opencode version — automated as the §16 regression canary
+  (`TestOpencodeFullTUIAutoSubmitCanary`, `internal/session`). The failure
+  mode remains visible (the agent waits at its prompt), never a silently
   mis-recorded run.
 - Config pass-throughs, appended to argv when set (validated in Phase 0):
   - `model` → `--model <provider/model>`
@@ -360,6 +361,7 @@ command. There is **no** `--run` flag in this change (§9).
 | **opencode permission model differs from claude** | Medium | opencode permissions are config/agent-driven; "ask" rules prompt in the pane (works while attached), `auto_approve` passes `--auto`. User-owned configuration, same posture as claude's own permissions. |
 | **opencode binary missing / too old** | Low | Same as claude: `Resolve()` fails the open with an install hint; the startup probe deletes the `trace_start` of a session that never launched (ADR-001 §4.1). |
 | **`interface = "full"` TUI nested inside loom's tmux** | Low | Same nested-tmux handling as claude (ADR-001 §4.4); opencode renders in the attach pane. |
+| **Full-TUI `--prompt` auto-submit** (T0, was the last open Phase 0 question) | Low | **Resolved (2026-08-09, v1.18.15):** probe confirmed auto-submit + TUI stays alive (transcript `docs/PROBE-full-tui.md`); the `interface = "full"` startup-validation gate is lifted. `TestOpencodeFullTUIAutoSubmitCanary` (`internal/session`, opt-in `LOOM_TEST_LIVE_OPENCODE=1`) guards a future regression to prefill-only instead of silently idling a `--detach` run (finding F5, DESIGN-002 §16). |
 | **Interface over-abstraction (drivers diverge)** | Low | Interface is four small methods; a driver that needs more implements a private optional interface (Go idiom). YAGNI guard: no dynamic registration. |
 | **Mislabeled "done"** — `run` mode semantics are "task complete", interactive is "user closed" | Low (future) | Not enabled in this change; when §9 ships, the card detail view shows the launch mode alongside `●`/`◉`. |
 
@@ -380,10 +382,11 @@ command. There is **no** `--run` flag in this change (§9).
 
 | Layer | What | How |
 |-------|------|-----|
-| **Phase 0 (tmux feasibility, extended)** | opencode interactive launch mechanics | **`--mini --prompt '<ctx>'` auto-submits (verified, v1.18.15) and the split-footer REPL stays alive until quit (verified).** `capture-pane` shows the quoted prompt. `SendKeys` default is `""` (was `"Enter"`). Residual: full-TUI `--prompt` auto-submit. |
-| **Unit** | Driver contract | Table-driven: each driver returns the expected argv for a given card + config (claude positional vs opencode `--mini --prompt`); quoting is idempotent on strings containing `'` and newlines; `AgentOrDefault` resolution (`NULL` → `[agent] default`, explicit → card value); `cards.agent` CHECK rejects unknown names. |
-| **Integration** | Card open → session → completion → trace, per driver | Parametrize the existing stub-agent test (ADR-001 §10) for stub `claude` and stub `opencode`: assert `loom-<id>` session name, cwd, and the quoted argv in the pane; session-end → `trace_end`; `loom card close` kills + finalizes; git reconciliation still attributes changes (§5). |
+| **Phase 0 (tmux feasibility, extended)** | opencode interactive launch mechanics | **`--mini --prompt '<ctx>'` and full-TUI `--prompt '<ctx>'` both auto-submit (verified, v1.18.15) and both stay alive until quit (verified).** `capture-pane` shows the quoted prompt. `SendKeys` default is `""` for both. Full-TUI leg closed by T0 (`docs/PROBE-full-tui.md`). |
+| **Unit** | Driver contract | Table-driven: each driver returns the expected argv for a given card + config (claude positional vs opencode `--mini --prompt`); quoting is idempotent on strings containing `'` and newlines; `AgentOrDefault` resolution (`NULL` → `[agent] default`, explicit → card value); `cards.agent` CHECK rejects unknown names. `internal/agent` — 100% statement coverage. |
+| **Integration** | Card open → session → completion → trace, per driver | Parametrize the existing stub-agent test (ADR-001 §10) for stub `claude` and stub `opencode` (mini + full): assert `loom-<id>` session name, cwd, and the quoted argv in the pane; session-end → `trace_end`; `loom card close` kills + finalizes; git reconciliation still attributes changes, incl. a run that outlives loom (§5). Shipped as `TestEnsurePerDriverSessionNameCwdAndArgv` and `TestReconcileOnStartupAttributesGitChanges` in `internal/session`. |
 | **Failure paths** | Bad binary per driver | Point each driver's `binary` at a nonexistent path → open fails, `capture-pane` text surfaced, **no** `trace_start` row (ADR-001 §4.1 steps 0–1). |
+| **Regression canary** | Auto-submit still works (both `mini` and `full`) | `TestOpencodeFullTUIAutoSubmitCanary` (`internal/session`) automates the `docs/PROBE-full-tui.md` method against the real opencode CLI; opt-in via `LOOM_TEST_LIVE_OPENCODE=1` (a live LLM call), so a default `go test ./...` never spends it. |
 | **Schema** | Migration | `cards.agent` default NULL, CHECK enforced, existing rows migrate NULL, `goose down` restores. |
 
 **Project coverage bar (ADR-001 §10) unchanged;** the tmux attach handoff to a
@@ -412,5 +415,6 @@ Total ~2 days, all behind the existing Phase 2–3 SessionManager work:
 - **opencode TUI** — https://opencode.ai/docs/tui/ (`--mini`, `--prompt`).
 - **opencode source (verified, dev @ 2026-08-09)** —
   `packages/opencode/src/cli/cmd/run.ts` (non-interactive exits on idle;
-  `--interactive` rejected on `run`), `cli/cmd/tui.ts` and
-  `packages/tui/src/routes/session/index.tsx` (`--prompt` sets the input value).
+  `--mini` rejected on `run`, not `--interactive` — see the §1.2 correction),
+  `cli/cmd/tui.ts` and `packages/tui/src/routes/session/index.tsx`
+  (`--prompt` sets the input value).

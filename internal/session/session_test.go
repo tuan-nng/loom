@@ -5,13 +5,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"loom/internal/agent"
 	"loom/internal/config"
 	"loom/internal/store"
 	"loom/internal/trace"
@@ -53,6 +56,29 @@ func seedCardAt(t *testing.T, db *sql.DB, root string) store.Card {
 
 func seedCard(t *testing.T, db *sql.DB) store.Card {
 	return seedCardAt(t, db, t.TempDir())
+}
+
+// seedCardWithTitleAgent is seedCardAt plus a caller-chosen title (to prove
+// argv quoting round-trips embedded quotes/spaces) and agent (nil → default).
+func seedCardWithTitleAgent(t *testing.T, db *sql.DB, root, title string, agentName *string) store.Card {
+	t.Helper()
+	ws, err := store.CreateWorkspace(db, "ws", root)
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	board, err := store.CreateBoard(db, ws.ID, "Board")
+	if err != nil {
+		t.Fatalf("CreateBoard: %v", err)
+	}
+	col, err := store.CreateColumn(db, board.ID, "To Do", "todo")
+	if err != nil {
+		t.Fatalf("CreateColumn: %v", err)
+	}
+	card, err := store.CreateCard(db, store.CardInput{ColumnID: col.ID, Title: title, Agent: agentName})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	return card
 }
 
 // writeStub places an executable script named name in a fresh stub dir and
@@ -537,5 +563,223 @@ func TestSessionsRoundTrip(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("session %s not in %v", name, states)
+	}
+}
+
+// strPtr is a *string constructor for CardInput.Agent (which distinguishes
+// NULL, "follow [agent] default", from an explicit value, §6).
+func strPtr(s string) *string { return &s }
+
+// TestEnsurePerDriverSessionNameCwdAndArgv is the T21 "Integration — per
+// driver" row (DESIGN-002 §16): parametrized stub claude + stub opencode
+// (mini and full interface) scripts, against real tmux, asserting the
+// loom-<id> session name, the launch cwd, and that every argv element —
+// including the prompt, which carries a space and an embedded single quote —
+// survives the §4.4 single-quote escaping intact through tmux's
+// `$SHELL -c` re-parse.
+func TestEnsurePerDriverSessionNameCwdAndArgv(t *testing.T) {
+	const title = `Fix loom's quoting edge case`
+
+	cases := []struct {
+		name      string
+		stub      string
+		agent     *string // nil = NULL -> [agent] default ("claude")
+		wantArgs  []string
+		configure func(cfg *config.Config, stub string)
+	}{
+		{
+			name:  "claude",
+			stub:  "loomstub-driver-claude",
+			agent: nil,
+			configure: func(cfg *config.Config, stub string) {
+				cfg.Agent.Claude.Binary = stub
+			},
+		},
+		{
+			name:     "opencode-mini",
+			stub:     "loomstub-driver-oc-mini",
+			agent:    strPtr("opencode"),
+			wantArgs: []string{"--mini", "--prompt"},
+			configure: func(cfg *config.Config, stub string) {
+				cfg.Agent.Opencode.Binary = stub
+				cfg.Agent.Opencode.Interface = "mini"
+			},
+		},
+		{
+			name:     "opencode-full",
+			stub:     "loomstub-driver-oc-full",
+			agent:    strPtr("opencode"),
+			wantArgs: []string{"--prompt"},
+			configure: func(cfg *config.Config, stub string) {
+				cfg.Agent.Opencode.Binary = stub
+				cfg.Agent.Opencode.Interface = "full"
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSessionDB(t)
+			root := t.TempDir()
+			card := seedCardWithTitleAgent(t, db, root, title, tc.agent)
+
+			// The stub prints its cwd and every received argv element on its
+			// own line, so capture-pane exposes exactly what tmux's shell
+			// parsed out of the escaped command line.
+			stubBody := `printf 'CWD:%s\n' "$PWD"
+n=0
+for a in "$@"; do n=$((n+1)); printf 'ARG%d:%s\n' "$n" "$a"; done
+echo READY
+sleep 300`
+			writeStub(t, tc.stub, stubBody)
+
+			cfg := config.Default()
+			tc.configure(cfg, tc.stub)
+			tm := tmuxTest(t)
+			bootServer(t, tm)
+			rec := trace.NewRecorder(db)
+			m := newManager(tm, cfg, db, rec, func(string, ...any) {})
+			name := SessionName(card.ID)
+			t.Cleanup(func() { tm.KillSession(name) })
+
+			if err := m.Ensure(context.Background(), card); err != nil {
+				t.Fatalf("Ensure: %v", err)
+			}
+			waitForSession(t, tm, name, true)
+
+			if !strings.HasPrefix(name, "loom-") {
+				t.Fatalf("session name %q, want loom-<id> prefix (ADR-001 §4.4)", name)
+			}
+
+			// tmux soft-wraps long lines at the pane width; flatten before
+			// substring checks so a wrap point mid-path/mid-prompt doesn't
+			// spuriously break the assertion (no characters are inserted at
+			// a soft wrap, so this is a lossless join).
+			pane := tm.CapturePane(name)
+			flat := strings.ReplaceAll(pane, "\n", "")
+			if !strings.Contains(flat, "CWD:"+root) {
+				t.Fatalf("pane cwd mismatch, want CWD:%s in:\n%s", root, pane)
+			}
+			for i, flag := range tc.wantArgs {
+				want := fmt.Sprintf("ARG%d:%s", i+1, flag)
+				if !strings.Contains(flat, want) {
+					t.Fatalf("pane missing %q in:\n%s", want, pane)
+				}
+			}
+			// The prompt must arrive as ONE argv element, byte-for-byte —
+			// proof the §4.4 escaper round-trips through tmux's re-parse.
+			wantPrompt := fmt.Sprintf("ARG%d:%s", len(tc.wantArgs)+1, title)
+			if !strings.Contains(flat, wantPrompt) {
+				t.Fatalf("pane missing reconstructed prompt %q in:\n%s", wantPrompt, pane)
+			}
+		})
+	}
+}
+
+// TestReconcileOnStartupAttributesGitChanges is the T21 "git reconciliation
+// attributes changes (a run that outlives loom)" row: a run is opened
+// (baseline snapshotted) with no fsnotify watcher ever attached to it — as
+// if the loom process that launched it exited before this process started —
+// and a fresh Manager's ReconcileOnStartup must still attribute the file
+// change purely from the stored git baseline pair (ADR-001 §5).
+func TestReconcileOnStartupAttributesGitChanges(t *testing.T) {
+	db := openSessionDB(t)
+	root := gitRepo(t, map[string]string{"a.txt": "one"})
+	card := seedCardAt(t, db, root)
+
+	baseline, err := trace.SnapshotBaseline(root)
+	if err != nil {
+		t.Fatalf("SnapshotBaseline: %v", err)
+	}
+	rec := trace.NewRecorder(db)
+	if _, err := rec.StartRun(card.ID, root, baseline); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	// No Watch() call for this run: it "outlives loom" by construction — no
+	// live fsnotify watcher ever recorded its changes.
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+
+	tm := tmuxTest(t)
+	bootServer(t, tm)
+	m := newManager(tm, config.Default(), db, rec, func(string, ...any) {})
+	// No loom-<id> session exists for this card, so ReconcileOnStartup treats
+	// the run as ended and finalizes it via completeRun's git reconcile,
+	// exactly as a freshly started loom process would.
+	if err := m.ReconcileOnStartup(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnStartup: %v", err)
+	}
+	if n := countEvents(t, db, card.ID, "trace_end"); n != 1 {
+		t.Fatalf("trace_end = %d, want 1", n)
+	}
+	if n := countEvents(t, db, card.ID, "file_change"); n != 1 {
+		t.Fatalf("file_change = %d, want 1 (b.txt attributed with no live watcher)", n)
+	}
+	if fc := endFilesChanged(t, db, card.ID); fc != 1 {
+		t.Fatalf("files_changed = %d, want 1", fc)
+	}
+}
+
+// TestOpencodeFullTUIAutoSubmitCanary is the T21/DESIGN-002 §16 "Regression
+// canary" row (review finding F5): it automates the docs/PROBE-full-tui.md
+// method as a standing test, for both the mini and full interfaces, so a
+// future opencode version that regresses `--prompt` to prefill-only (rather
+// than auto-submitting) fails a test instead of silently idling a `--detach`
+// run. It needs the real opencode CLI, network, and a configured model — a
+// stub cannot exhibit prefill-vs-auto-submit behavior — so it is opt-in:
+// skipped unless LOOM_TEST_LIVE_OPENCODE=1 is set (even when opencode is on
+// PATH), so `go test ./...` never makes a live LLM call by default. Run it
+// explicitly on each opencode major bump (§15/§8).
+func TestOpencodeFullTUIAutoSubmitCanary(t *testing.T) {
+	if os.Getenv("LOOM_TEST_LIVE_OPENCODE") != "1" {
+		t.Skip("set LOOM_TEST_LIVE_OPENCODE=1 to run the live full-TUI auto-submit regression canary (see docs/PROBE-full-tui.md)")
+	}
+	bin, err := exec.LookPath("opencode")
+	if err != nil {
+		t.Skip("opencode not installed; skipping full-TUI auto-submit regression canary (see docs/PROBE-full-tui.md)")
+	}
+
+	for _, iface := range []string{"mini", "full"} {
+		t.Run(iface, func(t *testing.T) {
+			tm := tmuxTest(t)
+			bootServer(t, tm)
+			name := uniqueName(t)
+			t.Cleanup(func() { tm.KillSession(name) })
+
+			const prompt = "Reply with exactly: OK"
+			argv := []string{bin, "--prompt", prompt}
+			if iface == "mini" {
+				argv = []string{bin, "--mini", "--prompt", prompt}
+			}
+			if err := tm.NewSession(name, t.TempDir(), agent.CommandLine(argv)); err != nil {
+				t.Fatalf("NewSession: %v", err)
+			}
+			waitForSession(t, tm, name, true)
+
+			// Poll rather than a single fixed sleep: real model latency
+			// varies with the configured provider, unlike a stub.
+			var pane string
+			var gotResponse bool
+			deadline := time.Now().Add(60 * time.Second)
+			for time.Now().Before(deadline) {
+				pane = tm.CapturePane(name)
+				for _, ln := range strings.Split(pane, "\n") {
+					if strings.TrimSpace(ln) == "OK" {
+						gotResponse = true
+					}
+				}
+				if gotResponse {
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
+			if !gotResponse {
+				t.Fatalf("regression (F5): opencode %s interface did not auto-submit + respond within 60s — pane:\n%s", iface, pane)
+			}
+			if ok, err := tm.HasSession(name); err != nil || !ok {
+				t.Fatalf("session died after the prompt turn (LaunchMode=Interactive expects it stays alive): ok=%v err=%v", ok, err)
+			}
+		})
 	}
 }
