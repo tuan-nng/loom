@@ -5,6 +5,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -106,6 +107,22 @@ func SessionName(id string) string {
 		panic("session: colon forbidden in tmux session names (ADR-001 §4.4): " + id)
 	}
 	return "loom-" + id
+}
+
+// AttachCommand builds the tmux invocation that hands the terminal to
+// session name on t's `-L` server. When the caller is itself already
+// running inside an enclosing tmux client (`$TMUX` set), attaching directly
+// would nest a second tmux client inside the current pane; instead this
+// opens the session as a NEW WINDOW of that outer session — `tmux
+// new-window` reads `$TMUX` to target the enclosing server/session with no
+// `-L`/`-t` of its own — so "open" always surfaces as a tab, never a nested
+// attach. Outside tmux (no `$TMUX`), there is no outer session to add a tab
+// to, so it falls back to a direct attach.
+func (t Tmux) AttachCommand(name string) *exec.Cmd {
+	if os.Getenv("TMUX") != "" {
+		return exec.Command(t.bin, "new-window", "-n", name, "--", t.bin, "-L", t.Server, "attach-session", "-t", name)
+	}
+	return exec.Command(t.bin, "-L", t.Server, "attach-session", "-t", name)
 }
 
 // SessionState reports one live session's name and whether a client is

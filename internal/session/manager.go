@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"time"
 
 	"loom/internal/agent"
@@ -228,7 +227,7 @@ func (m *Manager) Attach(ctx context.Context, c store.Card) error {
 	if !ok {
 		return fmt.Errorf("session: card %s has no live session", c.ID)
 	}
-	cmd := exec.Command(m.tm.bin, "-L", m.tm.Server, "attach-session", "-t", name)
+	cmd := m.tm.AttachCommand(name)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
