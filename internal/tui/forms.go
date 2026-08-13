@@ -105,6 +105,7 @@ type form struct {
 // Field order per kind — marshalling references these, not magic indices.
 const (
 	nfTitle = iota
+	nfDescription
 	nfColumn
 	nfPriority
 	nfAgent
@@ -129,9 +130,9 @@ const (
 	mfColumn = iota
 )
 
-// openNewCardForm is the n overlay: title, the board's columns (seeded with
-// the focused column), priority (seeded "medium", the store default), and the
-// agent picker (seeded at the empty-default entry).
+// openNewCardForm is the n overlay: title, description, the board's columns
+// (seeded with the focused column), priority (seeded "medium", the store
+// default), and the agent picker (seeded at the empty-default entry).
 func openNewCardForm(svc Service, cols []store.Column, defaultAgent string, focusCol int) *form {
 	colNames := make([]string, len(cols))
 	colIDs := make([]string, len(cols))
@@ -149,6 +150,7 @@ func openNewCardForm(svc Service, cols []store.Column, defaultAgent string, focu
 		defaultAgent: defaultAgent,
 		fields: []field{
 			textField("title", ""),
+			textField("description", ""),
 			cycleField("column", colNames, colIDs, focusCol),
 			cycleField("priority", store.ValidPriorities, nil, indexOf(store.ValidPriorities, "medium")),
 			agentField(defaultAgent, indexOf(agentOptions(defaultAgent), "")),
@@ -483,6 +485,9 @@ func (f *form) cardInput() (store.CardInput, error) {
 		ColumnID: col,
 		Title:    title,
 		Priority: f.fields[nfPriority].selectedValue(),
+	}
+	if d := f.fields[nfDescription].input.Value(); d != "" {
+		in.Description = &d
 	}
 	if a := f.fields[nfAgent].selectedValue(); a != "" {
 		in.Agent = &a

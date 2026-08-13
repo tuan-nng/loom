@@ -86,12 +86,22 @@ func (d cardDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	} else {
 		line += rs.bar(width - used)
 	}
+
+	// Second row: the description, indented under the title so the badge and
+	// rule stay pinned to the title line. A card without a description renders
+	// a plain fill row, keeping every row uniformly two cells tall (the list
+	// paginator divides the column by delegate.Height()).
+	desc := strings.Join(strings.Fields(deref(ci.card.Description)), " ")
+	indent := cardRulePad + lipgloss.Width(badge) + 1
+	descLine := rs.desc.Render(truncateText(desc, width-indent-cardTrailPad))
+	line += "\n" + rs.bar(indent) + descLine + rs.bar(width-indent-lipgloss.Width(descLine))
+
 	// No trailing newline: the list joins rows itself, and an extra one grows
 	// the column past the height it was sized for.
 	fmt.Fprint(w, line)
 }
 
-func (cardDelegate) Height() int  { return 1 }
+func (cardDelegate) Height() int  { return 2 }
 func (cardDelegate) Spacing() int { return 0 }
 func (cardDelegate) Update(tea.Msg, *list.Model) tea.Cmd {
 	return nil

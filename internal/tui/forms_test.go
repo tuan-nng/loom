@@ -57,9 +57,9 @@ func TestFormKeysOpenOverlays(t *testing.T) {
 	}
 }
 
-// TestNewCardFormSubmits walks the n form end to end: type a title, cycle
-// priority to high, submit, and assert the marshalled CardInput plus the
-// post-fetch refocus onto the new card.
+// TestNewCardFormSubmits walks the n form end to end: type a title and
+// description, cycle priority to high, submit, and assert the marshalled
+// CardInput plus the post-fetch refocus onto the new card.
 func TestNewCardFormSubmits(t *testing.T) {
 	svc := newBoardService()
 	m := readyModel(t, svc)
@@ -67,7 +67,10 @@ func TestNewCardFormSubmits(t *testing.T) {
 	m, _ = press(t, m, 'n')
 	m, _ = typeText(t, m, "Buy milk")
 
-	// tab to column, cycle right (c-blog → c-todo), tab to priority, right (high)
+	// tab to description, type it; tab to column, cycle right (c-blog →
+	// c-todo); tab to priority, right (high)
+	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = typeText(t, m, "semi-skimmed")
 	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
@@ -83,6 +86,9 @@ func TestNewCardFormSubmits(t *testing.T) {
 	}
 	if svc.createInput.Title != "Buy milk" {
 		t.Errorf("title = %q, want Buy milk", svc.createInput.Title)
+	}
+	if svc.createInput.Description == nil || *svc.createInput.Description != "semi-skimmed" {
+		t.Errorf("Description = %v, want &semi-skimmed", svc.createInput.Description)
 	}
 	if svc.createInput.ColumnID != "c-todo" {
 		t.Errorf("ColumnID = %q, want c-todo", svc.createInput.ColumnID)
@@ -131,8 +137,9 @@ func TestNewCardAgentNilVsPinned(t *testing.T) {
 	m2 := readyModel(t, svc2)
 	m2, _ = press(t, m2, 'n')
 	m2, _ = typeText(t, m2, "x")
-	// tab ×3 to agent, right ×2 ("" → claude → opencode)
-	for i := 0; i < 3; i++ {
+	// tab ×4 to agent (title → description → column → priority → agent),
+	// right ×2 ("" → claude → opencode)
+	for i := 0; i < 4; i++ {
 		m2, _ = pressKey(t, m2, tea.KeyPressMsg{Code: tea.KeyTab})
 	}
 	m2, _ = pressKey(t, m2, tea.KeyPressMsg{Code: tea.KeyRight})
@@ -199,31 +206,32 @@ func TestFormNavigation(t *testing.T) {
 	m := readyModel(t, svc)
 
 	m, _ = press(t, m, 'n')
-	// tab: title(0) → column(1) → priority(2) → agent(3) → wraps to title(0)
-	for _, want := range []int{1, 2, 3, 0} {
+	// tab: title(0) → description(1) → column(2) → priority(3) → agent(4) →
+	// wraps to title(0)
+	for _, want := range []int{1, 2, 3, 4, 0} {
 		m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 		if m.form.focus != want {
 			t.Fatalf("after tab focus = %d, want %d", m.form.focus, want)
 		}
 	}
-	// shift+tab from title(0) wraps to agent(3)
+	// shift+tab from title(0) wraps to agent(4)
 	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	if m.form.focus != 3 {
-		t.Fatalf("after shift+tab focus = %d, want 3", m.form.focus)
+	if m.form.focus != 4 {
+		t.Fatalf("after shift+tab focus = %d, want 4", m.form.focus)
 	}
 
 	// right cycles the agent selection in place
-	before := m.form.fields[3].index
+	before := m.form.fields[4].index
 	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-	if got := m.form.fields[3].index; got != (before+1)%len(m.form.fields[3].options) {
-		t.Errorf("agent index = %d, want %d", got, (before+1)%len(m.form.fields[3].options))
+	if got := m.form.fields[4].index; got != (before+1)%len(m.form.fields[4].options) {
+		t.Errorf("agent index = %d, want %d", got, (before+1)%len(m.form.fields[4].options))
 	}
-	if !m.form.fields[3].touched {
+	if !m.form.fields[4].touched {
 		t.Error("cycling did not mark the field touched")
 	}
 
 	// left/right on a text field must not cycle; they reach the input instead
-	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // agent(3) → title(0)
+	m, _ = pressKey(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // agent(4) → title(0)
 	if m.form.focus != 0 {
 		t.Fatalf("focus = %d, want 0 (title)", m.form.focus)
 	}

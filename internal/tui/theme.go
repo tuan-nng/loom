@@ -74,6 +74,7 @@ type rowStyles struct {
 	bg     color.Color
 	badge  lipgloss.Style
 	title  lipgloss.Style
+	desc   lipgloss.Style
 	fill   lipgloss.Style
 	marker lipgloss.Style
 }
@@ -87,6 +88,7 @@ func newRowStyles(p palette, bg color.Color, cursor bool) rowStyles {
 		bg:     bg,
 		badge:  lipgloss.NewStyle().Background(bg).Foreground(p.muted),
 		title:  title,
+		desc:   lipgloss.NewStyle().Background(bg).Foreground(p.dim),
 		fill:   lipgloss.NewStyle().Background(bg),
 		marker: lipgloss.NewStyle().Background(bg),
 	}

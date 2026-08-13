@@ -466,6 +466,46 @@ func TestBadgeAndMarkersRender(t *testing.T) {
 	}
 }
 
+// TestCardRowShowsDescription checks the two-line card row: the description
+// renders under the title, and a card without one still draws a full-height
+// row so the column stays uniform.
+func TestCardRowShowsDescription(t *testing.T) {
+	svc := newBoardService()
+	svc.cards = []store.Card{
+		{ID: "k1", ColumnID: "c-blog", Title: "alpha", Description: strp("the what")},
+		{ID: "k2", ColumnID: "c-blog", Title: "beta"},
+	}
+	m := readyModel(t, svc)
+	got := plain(m.View().Content)
+	if !strings.Contains(got, "alpha") || !strings.Contains(got, "the what") {
+		t.Errorf("card row missing title or description:\n%s", got)
+	}
+	if !strings.Contains(got, "beta") {
+		t.Errorf("card row missing title-only card:\n%s", got)
+	}
+	if got := plain(m.lists[0].View()); !strings.Contains(got, "the what") {
+		t.Errorf("column view missing description line:\n%s", got)
+	}
+}
+
+// TestCardRowTruncatesLongDescription pins the second row's truncation math:
+// a description wider than the column is clipped with the ellipsis and the
+// row still ends in the fill (no overflow into the column frame).
+func TestCardRowTruncatesLongDescription(t *testing.T) {
+	svc := newBoardService()
+	svc.cards = []store.Card{
+		{ID: "k1", ColumnID: "c-blog", Title: "alpha", Description: strp("a very long description that far exceeds the column body width")},
+	}
+	m := readyModel(t, svc)
+	col := plain(m.lists[0].View())
+	if !strings.Contains(col, "…") {
+		t.Errorf("long description not truncated with ellipsis:\n%s", col)
+	}
+	if strings.Contains(col, "exceeds") {
+		t.Errorf("long description overflowed the column:\n%s", col)
+	}
+}
+
 // TestSessionCompletionToast covers the running→gone transition: a poll that
 // finds a previously-live card absent raises the detached-completion toast
 // and drops its marker.
