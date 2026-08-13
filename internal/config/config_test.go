@@ -51,8 +51,8 @@ func TestDefault(t *testing.T) {
 	if cfg.Agent.Opencode.Binary != "opencode" {
 		t.Errorf("Default: Opencode.Binary = %q, want %q", cfg.Agent.Opencode.Binary, "opencode")
 	}
-	if cfg.Agent.Opencode.Interface != "mini" {
-		t.Errorf("Default: Opencode.Interface = %q, want %q", cfg.Agent.Opencode.Interface, "mini")
+	if cfg.Agent.Opencode.Interface != "full" {
+		t.Errorf("Default: Opencode.Interface = %q, want %q", cfg.Agent.Opencode.Interface, "full")
 	}
 	if cfg.Session.TmuxServer != "loom" {
 		t.Errorf("Default: TmuxServer = %q, want %q", cfg.Session.TmuxServer, "loom")

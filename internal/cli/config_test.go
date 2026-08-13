@@ -21,7 +21,7 @@ func TestRunConfigPrintsEffectiveTOML(t *testing.T) {
 		"[agent.claude]",
 		"binary = \"claude\"",
 		"[agent.opencode]",
-		"interface = \"mini\"",
+		"interface = \"full\"",
 		"[session]",
 		"tmux_server = \"loom\"",
 		"[database]",
@@ -52,7 +52,7 @@ func TestRunConfigRoundTrips(t *testing.T) {
 func TestRunConfigReflectsOverrides(t *testing.T) {
 	cfg := config.Default()
 	cfg.Agent.Default = "opencode"
-	cfg.Agent.Opencode.Interface = "full"
+	cfg.Agent.Opencode.Interface = "mini"
 	db := openCLIDB(t)
 	a := newApp(cfg, db, &stubSess{}, &strings.Builder{}, &strings.Builder{})
 	out := &strings.Builder{}
@@ -64,7 +64,7 @@ func TestRunConfigReflectsOverrides(t *testing.T) {
 	if !strings.Contains(got, "default = \"opencode\"") {
 		t.Errorf("config output missing override default:\n%s", got)
 	}
-	if !strings.Contains(got, "interface = \"full\"") {
+	if !strings.Contains(got, "interface = \"mini\"") {
 		t.Errorf("config output missing interface override:\n%s", got)
 	}
 }

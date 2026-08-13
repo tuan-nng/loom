@@ -52,7 +52,7 @@ func Default() *Config {
 			Claude:  ClaudeConfig{Binary: "claude"},
 			Opencode: OpencodeConfig{
 				Binary:    "opencode",
-				Interface: "mini",
+				Interface: "full",
 			},
 		},
 		Session: SessionConfig{

@@ -142,7 +142,8 @@ model = ""                  # optional; maps to claude's --model
 binary = "opencode"
 model = ""                  # optional; maps to opencode's -m/--model
 opencode_agent = ""         # optional; maps to opencode's --agent
-interface = "mini"          # "mini" (default, split-footer REPL) | "full"
+interface = "full"          # "full" (default, the standard opencode TUI) |
+                             # "mini" (split-footer REPL)
 auto_approve = false        # true -> passes --auto (approve permissions
                              # not explicitly denied)
 
