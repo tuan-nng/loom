@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -45,8 +46,10 @@ func TestSearchFilterNarrowsBoard(t *testing.T) {
 	if strings.Contains(got, "beta") {
 		t.Errorf("non-matching card beta still visible:\n%s", got)
 	}
-	if !strings.Contains(got, "Backlog 1") {
-		t.Errorf("backlog header count did not narrow to 1:\n%s", got)
+	// The column title bar sets the name and the count into the top border:
+	// ╭─ Backlog ──── 1 ─╮
+	if !regexp.MustCompile(`Backlog ─+ 1`).MatchString(got) {
+		t.Errorf("backlog title-bar count did not narrow to 1:\n%s", got)
 	}
 	if n := m.lists[0].Items(); len(n) != 1 {
 		t.Errorf("backlog items = %d, want 1", len(n))

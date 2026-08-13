@@ -52,13 +52,15 @@ func (helpOverlay) view(width, height int) string {
 
 	var b strings.Builder
 	b.WriteString(helpTitleStyle.Render("Keymap"))
+	b.WriteString("\n")
+	b.WriteString(helpHintStyle.Render(strings.Repeat("─", boxW-8)))
 	b.WriteString("\n\n")
 	for _, row := range helpRows() {
 		b.WriteString(fmt.Sprintf("  %s  %s\n", helpKeyStyle.Render(row.keys), helpActionStyle.Render(row.action)))
 	}
 	b.WriteString("\n" + helpHintStyle.Render("esc/q close"))
 
-	box := formBoxStyle.Render(b.String())
+	box := formBoxStyle.Width(boxW - 4).Render(b.String())
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -98,10 +100,3 @@ func keyNames(bs ...key.Binding) string {
 	}
 	return strings.Join(names, ", ")
 }
-
-var (
-	helpTitleStyle  = lipgloss.NewStyle().Bold(true).Underline(true)
-	helpKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	helpActionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	helpHintStyle   = lipgloss.NewStyle().Faint(true)
-)

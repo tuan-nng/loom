@@ -549,10 +549,12 @@ func (f *form) view(width, height int) string {
 	if boxW < 20 {
 		boxW = 20
 	}
-	inW := boxW - 2
+	inW := boxW - 8
 
 	var b strings.Builder
 	b.WriteString(formTitleStyle.Render(f.title))
+	b.WriteString("\n")
+	b.WriteString(formHintStyle.Render(strings.Repeat("─", inW)))
 	b.WriteString("\n\n")
 	for i := range f.fields {
 		fld := &f.fields[i]
@@ -579,9 +581,11 @@ func (f *form) view(width, height int) string {
 		b.WriteString(formErrStyle.Render(f.err))
 		b.WriteString("\n")
 	}
-	b.WriteString(formHintStyle.Render("tab next · shift+tab back · enter submit · esc cancel"))
+	b.WriteString(formHintStyle.Render("tab next · shift+tab back"))
+	b.WriteString("\n")
+	b.WriteString(formHintStyle.Render("enter submit · esc cancel"))
 
-	box := formBoxStyle.Render(b.String())
+	box := formBoxStyle.Width(boxW - 4).Render(b.String())
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -676,13 +680,3 @@ func (m Model) formUpdate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, cmd
 }
-
-var (
-	formBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	formTitleStyle  = lipgloss.NewStyle().Bold(true).Underline(true)
-	formLabelStyle  = lipgloss.NewStyle().Bold(true)
-	formValueStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	formCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	formErrStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	formHintStyle   = lipgloss.NewStyle().Faint(true)
-)

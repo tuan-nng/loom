@@ -121,7 +121,7 @@ type Model struct {
 	board   store.Board
 	columns []store.Column
 	cards   []store.Card
-	search  string      // active / filter (case-insensitive title/description)
+	search  string       // active / filter (case-insensitive title/description)
 	lists   []list.Model // one per column, same order as columns
 	focus   int          // index of the focused column
 
@@ -133,13 +133,17 @@ type Model struct {
 
 	width, height int
 
+	// themeQueried gates the one-shot terminal background probe that picks
+	// the light or dark palette (see applyTheme).
+	themeQueried bool
+
 	note string // status-bar toast (stub key hints, session notices)
 
 	confirmQuit bool // q pressed with sessions attached: overlay open
 
-	form    *form        // n/N/m/e/s/w overlay open (T18/T20); nil = board navigation active
-	detail  *cardDetail  // `d` detail pane open (T19); nil = closed
-	help    *helpOverlay // `?` keymap overlay open (T20); nil = closed
+	form   *form        // n/N/m/e/s/w overlay open (T18/T20); nil = board navigation active
+	detail *cardDetail  // `d` detail pane open (T19); nil = closed
+	help   *helpOverlay // `?` keymap overlay open (T20); nil = closed
 
 	// pendingFocus is the card the cursor should land on once the post-mutation
 	// snapshot lands. The lists at submit time are stale (the fetch is in
@@ -195,6 +199,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.phase == phaseReady {
 			m.relayout()
 		}
+		// The palette defaults to dark; the first resize is the earliest
+		// point the program can ask the terminal what it actually is.
+		if !m.themeQueried {
+			m.themeQueried = true
+			return m, tea.RequestBackgroundColor
+		}
+		return m, nil
+	case tea.BackgroundColorMsg:
+		applyTheme(msg.IsDark())
 		return m, nil
 	case fetchMsg:
 		return m.applyFetch(msg)
@@ -390,9 +403,9 @@ func (m Model) afterKill(msg killMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	switch m.phase {
 	case phaseLoading:
-		return tea.NewView("loading loom…")
+		return tea.NewView(splashStyle.Render("loom") + " loading…")
 	case phaseError:
-		return tea.NewView(m.errText)
+		return tea.NewView(errorStyle.Render("loom: ") + m.errText)
 	default:
 		return tea.NewView(m.layout())
 	}

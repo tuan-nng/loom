@@ -3,8 +3,10 @@ package tui
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/lipgloss/v2"
 
@@ -26,27 +28,67 @@ type cardItem struct {
 // FilterValue is the title, matching `loom card list --search` semantics.
 func (i cardItem) FilterValue() string { return i.card.Title }
 
-// cardDelegate renders one card row: cursor, agent badge, bold title, and the
-// live session marker (ADR-001 §3.5, DESIGN-002 §14).
-type cardDelegate struct{}
+// cardDelegate renders one card row as a full-width cell on the column
+// surface: a priority rule, the agent badge, the title, and the live session
+// marker pinned right (ADR-001 §3.5, DESIGN-002 §14). focused says whether
+// the row's column holds the board focus, which decides how loud the cursor
+// row is: a full accent highlight in the focused column, a muted one
+// elsewhere so every column still shows where its cursor rests.
+type cardDelegate struct{ focused bool }
 
-func (cardDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+// rowWidths: the fixed cells a row spends outside the title — the priority
+// rule, the gap after it, and the gap plus glyph reserved for the marker.
+const (
+	cardRulePad   = 2 // "▎" + gap
+	cardMarkerPad = 2 // gap + ●/◉
+	cardTrailPad  = 1 // right breathing room
+)
+
+func (d cardDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	ci, ok := item.(cardItem)
 	if !ok {
 		return
 	}
-	marker := "  "
+	width := m.Width()
+	if width < cardRulePad+1 {
+		width = cardRulePad + 1
+	}
+
+	rs := rowIdle
 	if index == m.Index() {
-		marker = "▸ "
+		rs = rowCursorIdle
+		if d.focused {
+			rs = rowCursor
+		}
 	}
-	title := cardTitleStyle.Render(ci.card.Title)
-	line := marker + cardBadgeStyle.Render("["+ci.badge+"]") + " " + title
-	if ci.attached {
-		line += sessionAttachedStyle.Render(" ◉")
-	} else if ci.running {
-		line += sessionRunningStyle.Render(" ●")
+
+	marker, markerStyle := "", rs.marker
+	switch {
+	case ci.attached:
+		marker, markerStyle = "◉", rs.marker.Foreground(pal.attached)
+	case ci.running:
+		marker, markerStyle = "●", rs.marker.Foreground(pal.running)
 	}
-	fmt.Fprintln(w, line)
+
+	badge := "[" + ci.badge + "]"
+	reserved := cardRulePad + lipgloss.Width(badge) + 1 + cardTrailPad
+	if marker != "" {
+		reserved += cardMarkerPad
+	}
+	title := truncateText(ci.card.Title, width-reserved)
+
+	line := rs.priorityBar(ci.card.Priority) + rs.bar(1) +
+		rs.badge.Render(badge) + rs.bar(1) + rs.title.Render(title)
+
+	used := cardRulePad + lipgloss.Width(badge) + 1 + lipgloss.Width(title)
+	if marker != "" {
+		line += rs.bar(width-used-1-cardTrailPad) + markerStyle.Render(marker) + rs.bar(cardTrailPad)
+	} else {
+		line += rs.bar(width - used)
+	}
+	// No trailing newline: the list joins rows itself, and an extra one grows
+	// the column past the height it was sized for.
+	fmt.Fprint(w, line)
 }
 
 func (cardDelegate) Height() int  { return 1 }
@@ -59,6 +101,12 @@ const (
 	headerHeight = 1
 	statusHeight = 1
 	colGap       = 1
+
+	// columnChrome is the vertical cost of a column's frame: the titled top
+	// border and the bottom border.
+	columnChrome = 2
+	// columnSides is the horizontal cost of a column's left/right border.
+	columnSides = 2
 )
 
 // buildLists creates the column lists from the current snapshot, replacing
@@ -78,13 +126,15 @@ func (m *Model) buildLists() {
 	}
 	lists := make([]list.Model, len(m.columns))
 	for i, col := range m.columns {
-		l := list.New(cardsByCol[col.ID], cardDelegate{}, 0, 0)
+		l := list.New(cardsByCol[col.ID], cardDelegate{focused: i == m.focus}, 0, 0)
 		l.KeyMap = columnKeyMap()
 		l.SetShowTitle(false)
 		l.SetShowStatusBar(false)
 		l.SetShowPagination(false)
 		l.SetShowHelp(false)
 		l.SetFilteringEnabled(false)
+		l.SetStatusBarItemName("card", "cards")
+		l.Styles.NoItems = columnEmptyStyle
 		lists[i] = l
 	}
 	m.lists = lists
@@ -149,45 +199,46 @@ func agentBadge(name string) string {
 	}
 }
 
+// columnWidth is the outer width of one column (its frame included), sharing
+// the terminal evenly across the column count with a gap between neighbours.
+func (m Model) columnWidth() int {
+	n := len(m.lists)
+	if n == 0 || m.width <= 0 {
+		return 0
+	}
+	w := (m.width - (n-1)*colGap) / n
+	if w < columnSides+1 {
+		w = columnSides + 1
+	}
+	return w
+}
+
 // relayout sizes each column list for the current terminal: columns share
-// the width evenly (with column gaps), the list body is everything below the
-// header and status rows. A freshly-resized terminal with a zero width is
-// skipped until the first real WindowSizeMsg lands.
+// the width evenly (with column gaps), and the list body is everything the
+// header, status bar, and the column's own frame leave behind. A freshly
+// resized terminal with a zero width is skipped until the first real
+// WindowSizeMsg lands.
 func (m *Model) relayout() {
 	n := len(m.lists)
 	if n == 0 || m.width <= 0 || m.height <= 0 {
 		return
 	}
-	colWidth := (m.width - (n-1)*colGap) / n
-	if colWidth < 1 {
-		colWidth = 1
+	bodyWidth := m.columnWidth() - columnSides
+	if bodyWidth < 1 {
+		bodyWidth = 1
 	}
-	bodyHeight := m.height - headerHeight - statusHeight
+	bodyHeight := m.height - headerHeight - statusHeight - columnChrome
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
 	for i := range m.lists {
-		m.lists[i].SetSize(colWidth, bodyHeight)
+		m.lists[i].SetSize(bodyWidth, bodyHeight)
 	}
 }
 
-// layout composes the header row, the five column bodies, and the status bar
-// into one string. A T18 form overlay replaces the whole board with its
-// centered box.
+// layout composes the header bar, the column row, and the status bar into one
+// string. A T18 form overlay replaces the whole board with its centered box.
 func (m Model) layout() string {
-	colWidth := 0
-	if n := len(m.lists); n > 0 {
-		colWidth = (m.width - (n-1)*colGap) / n
-		if colWidth < 1 {
-			colWidth = 1
-		}
-	}
-	cols := make([]string, len(m.lists))
-	for i := range m.lists {
-		cols[i] = m.columnView(i, colWidth)
-	}
-	board := lipgloss.JoinHorizontal(lipgloss.Top, cols...)
-	out := lipgloss.JoinVertical(lipgloss.Top, board, m.statusBar())
 	if m.form != nil {
 		return m.formView()
 	}
@@ -197,21 +248,91 @@ func (m Model) layout() string {
 	if m.help != nil {
 		return m.helpView()
 	}
-	return out
+	return lipgloss.JoinVertical(lipgloss.Top, m.headerBar(), m.boardView(), m.statusBar())
 }
 
-// columnView renders one column: a header (name + card count, focused column
-// emphasized) and the list body.
-func (m Model) columnView(i, width int) string {
-	col := m.columns[i]
-	title := fmt.Sprintf("%s %d", col.Name, m.listCount(i))
-	style := columnInactiveStyle
-	if i == m.focus {
-		style = columnFocusStyle
+// boardView is the column row: every column framed and filled, separated by a
+// one-cell gap so the panels read as distinct surfaces.
+func (m Model) boardView() string {
+	if len(m.lists) == 0 {
+		return ""
 	}
-	header := style.Width(width).MaxWidth(width).Render(title)
-	body := m.lists[i].View()
-	return lipgloss.JoinVertical(lipgloss.Top, header, body)
+	width := m.columnWidth()
+	parts := make([]string, 0, 2*len(m.lists)-1)
+	gap := columnGapStyle.Render(strings.Repeat(" ", colGap))
+	for i := range m.lists {
+		if i > 0 {
+			parts = append(parts, gap)
+		}
+		parts = append(parts, m.columnView(i, width))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+// columnView renders one column as a filled panel: the name and card count
+// live in the top border, the cards fill the body, and the focused column
+// trades its muted frame for the accent one.
+func (m Model) columnView(i, width int) string {
+	focused := i == m.focus
+	inner := width - columnSides
+	if inner < 1 {
+		inner = 1
+	}
+
+	frame := columnBodyStyle
+	if focused {
+		frame = columnBodyFocusStyle
+	}
+	l := m.lists[i]
+	l.SetDelegate(cardDelegate{focused: focused})
+	// lipgloss counts the border inside Width, so the frame is asked for the
+	// column's outer width and the list fills the inner cells.
+	body := frame.Width(width).Render(l.View())
+	return lipgloss.JoinVertical(lipgloss.Top, m.columnTitleBar(i, width, focused), body)
+}
+
+// columnTitleBar draws the column's top border with its name and card count
+// set into the rule: ╭─ Backlog ──── 3 ─╮. A column too narrow to hold both
+// degrades to a plain rule rather than overflowing into its neighbour.
+func (m Model) columnTitleBar(i, width int, focused bool) string {
+	border, title, count := columnBorderStyle, columnTitleStyle, columnCountStyle
+	if focused {
+		border, title, count = columnBorderFocusStyle, columnTitleFocusStyle, columnCountFocusStyle
+	}
+
+	label := strconv.Itoa(m.listCount(i))
+	// "╭─ " + name + " " + rule + " " + count + " ─╮"
+	const fixed = 8
+	room := width - fixed - lipgloss.Width(label)
+	if room < 1 {
+		return border.Render(strings.Repeat("─", width))
+	}
+	name := truncateText(m.columns[i].Name, room)
+	rule := room - lipgloss.Width(name)
+
+	return border.Render("╭─ ") + title.Render(name) +
+		border.Render(" "+strings.Repeat("─", rule)+" ") +
+		count.Render(label) + border.Render(" ─╮")
+}
+
+// headerBar is the top chrome: the loom brand, the `workspace › board`
+// breadcrumb, and — pinned right — the active search filter and card count.
+func (m Model) headerBar() string {
+	if m.width <= 0 {
+		return ""
+	}
+	left := brandStyle.Render(" loom ") +
+		crumbStyle.Render(" "+m.ws.Name) +
+		crumbSepStyle.Render(" › ") +
+		crumbStyle.Render(m.board.Name+" ")
+
+	var right string
+	if m.search != "" {
+		right = chipStyle.Render(" /"+truncateText(m.search, 16)+" ") + headerFillStyle.Render(" ")
+	}
+	right += headerFillStyle.Render(fmt.Sprintf("%d cards ", len(m.visibleCards())))
+
+	return barLine(m.width, headerFillStyle, left, right)
 }
 
 func (m Model) listCount(i int) int {
@@ -240,57 +361,69 @@ func (m Model) attachedCount() int {
 	return n
 }
 
-// statusBar is the single bottom line: `workspace › board` pinned left, the
-// session summary / note pinned right. With the quit overlay open the right
-// half is the confirm prompt.
+// statusBar is the single bottom line: the live session summary (or the
+// current toast, or the quit confirmation) pinned left, the key hints pinned
+// right. The hints are the first thing a new user needs and the last thing an
+// old one reads, so they yield to nothing but the terminal's width.
 func (m Model) statusBar() string {
-	left := fmt.Sprintf("%s › %s", m.ws.Name, m.board.Name)
+	if m.width <= 0 {
+		return ""
+	}
 
-	var right string
+	var left string
 	switch {
 	case m.confirmQuit:
-		right = "quit? (y/enter yes · n/esc no · Q force)"
+		left = statusWarnStyle.Render(" quit? ") +
+			statusTextStyle.Render("y/enter yes · n/esc no · Q force ")
 	case m.note != "":
-		right = m.note
+		left = statusTextStyle.Render(" " + m.note + " ")
 	default:
-		running, attached := m.runningCount(), m.attachedCount()
-		if running == 0 {
-			right = "no sessions"
-		} else if attached > 0 {
-			right = fmt.Sprintf("● %d running · ◉ %d attached", running, attached)
-		} else {
-			right = fmt.Sprintf("● %d running", running)
-		}
+		left = " " + m.sessionSummary() + " "
 	}
 
-	sep := "  "
-	avail := m.width - lipgloss.Width(left) - lipgloss.Width(sep)
-	if rw := lipgloss.Width(right); rw > avail {
-		// Slim the right side to the available cells rather than wrapping
-		// the bar onto a second line.
-		r := []rune(right)
-		if avail < 1 {
-			right = ""
-		} else {
-			right = string(r[:avail]) + "…"
-		}
-	}
-	line := strings.TrimRight(left+sep+right, " ")
-	return lipgloss.NewStyle().Width(m.width).Render(line)
+	return barLine(m.width, statusFillStyle, left, m.hints()+statusFillStyle.Render(" "))
 }
 
-var (
-	columnFocusStyle    = lipgloss.NewStyle().Bold(true).Underline(true)
-	columnInactiveStyle = lipgloss.NewStyle().Faint(true)
+// sessionSummary is the ●/◉ live-session tally, or the idle placeholder when
+// no card session is running.
+func (m Model) sessionSummary() string {
+	running, attached := m.runningCount(), m.attachedCount()
+	if running == 0 {
+		return statusFillStyle.Render("no sessions")
+	}
+	out := statusFillStyle.Foreground(pal.running).Render("●") +
+		statusTextStyle.Render(fmt.Sprintf(" %d running", running))
+	if attached > 0 {
+		out += statusFillStyle.Render(" · ") +
+			statusFillStyle.Foreground(pal.attached).Render("◉") +
+			statusTextStyle.Render(fmt.Sprintf(" %d attached", attached))
+	}
+	return out
+}
 
-	// cardTitleStyle bolds the card title (T17 cell spec: title bold).
-	cardTitleStyle = lipgloss.NewStyle().Bold(true)
+// hints is the always-on key legend, rendered from the canonical §3.5 keymap
+// so it can never drift from the bindings.
+func (m Model) hints() string {
+	km := defaultKeyMap()
+	pairs := [][2]string{
+		{firstKey(km.Open), "open"},
+		{firstKey(km.NewCard), "new"},
+		{firstKey(km.Detail), "detail"},
+		{firstKey(km.Search), "search"},
+		{firstKey(km.Help), "help"},
+		{firstKey(km.Quit), "quit"},
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, statusKeyStyle.Render(p[0])+statusFillStyle.Render(" "+p[1]))
+	}
+	return strings.Join(parts, statusFillStyle.Render(" · "))
+}
 
-	// cardBadgeStyle faints the [cl]/[oc] tag so titles dominate the cell.
-	cardBadgeStyle = lipgloss.NewStyle().Faint(true)
-
-	// sessionRunningStyle / sessionAttachedStyle are the ●/◉ live markers
-	// (ADR-001 §3.5): attached outranks running, and both are tinted.
-	sessionRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	sessionAttachedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-)
+// firstKey is a binding's primary key, the one the legend advertises.
+func firstKey(b key.Binding) string {
+	if ks := b.Keys(); len(ks) > 0 {
+		return ks[0]
+	}
+	return ""
+}

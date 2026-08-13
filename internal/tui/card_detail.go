@@ -96,8 +96,10 @@ func (d cardDetail) view(width, height int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(detailTitleStyle.Render(d.card.Title))
-	b.WriteString("\n\n")
+	b.WriteString(detailTitleStyle.Render(truncateText(d.card.Title, boxW-8)))
+	b.WriteString("\n")
+	b.WriteString(detailHintStyle.Render(strings.Repeat("─", boxW-8)))
+	b.WriteString("\n")
 
 	meta := []string{
 		fmt.Sprintf("Priority: %s", detailValueStyle.Render(d.card.Priority)),
@@ -145,7 +147,7 @@ func (d cardDetail) view(width, height int) string {
 
 	b.WriteString("\n" + detailHintStyle.Render("esc/q close"))
 
-	box := formBoxStyle.Render(b.String())
+	box := formBoxStyle.Width(boxW - 4).Render(b.String())
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -199,12 +201,3 @@ func renderMarkdown(s string) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
-
-var (
-	detailTitleStyle   = lipgloss.NewStyle().Bold(true).Underline(true)
-	detailSectionStyle = lipgloss.NewStyle().Bold(true)
-	detailValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	detailRunTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	detailHintStyle    = lipgloss.NewStyle().Faint(true)
-	detailErrStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-)
