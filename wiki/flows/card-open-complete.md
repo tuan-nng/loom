@@ -11,7 +11,7 @@ The primary loop: **board → card → agent session → trace**. Opening a card
 
 ## Trigger
 
-- `Enter` on a card in the [TUI](../modules/tui.md) — shipped T17: ensure via `BoardService.OpenCard(ctx, id, detach=true)`, then hand the TTY to `tmux attach-session` through `tea.ExecProcess` (the board restores on detach) — or `loom card open <id>` (interactive) / `loom card open <id> --detach` (scriptable).
+- `Enter` on a card in the [TUI](../modules/tui.md) — shipped T17: ensure via `BoardService.OpenCard(ctx, id, detach=true)`, then hand the TTY to `session.AttachCommandFor` (the attach handoff: `link-window`/`select-window` into the enclosing tmux when loom runs inside one, `attach-session` standalone) through `tea.ExecProcess` (the board restores on detach) — or `loom card open <id>` (interactive) / `loom card open <id> --detach` (scriptable).
 
 ## Sequence diagram
 
@@ -51,7 +51,7 @@ sequenceDiagram
 5. **Probe** (~500ms) — if the session is already gone, capture-pane, kill, and delete (not finalize) — a failed launch never appears as a completed run.
 6. **Record** — `StartRun` writes `trace_start` + starts the fsnotify watcher (run recorded **after** probe; DESIGN-002 §10.2).
 7. **SendKeys** (if set; `""` for both shipped drivers) after the probe.
-8. **Attach** or `--detach`; user steers/answers prompts; poll drives markers.
+8. **Attach** (via `AttachCommand`: a linked tab inside the user's tmux, else `attach-session`) or `--detach`; user steers/answers prompts; poll drives markers.
 9. **Complete** — session vanishes → stop watcher, git-reconcile, emit missing `file_change`, write `trace_end`.
 
 ## Failure modes

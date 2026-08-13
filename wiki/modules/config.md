@@ -12,7 +12,7 @@ The `internal/config` package is a **leaf** (imports nothing internal) and the *
 ## Responsibilities
 
 - Load and parse TOML config from the user config dir.
-- Provide a `Default()` config (claude/opencode binaries, `interface = "mini"`, `default = "claude"`).
+- Provide a `Default()` config (claude/opencode binaries, `interface = "full"` — the default flipped from `mini` to `full` in commit `5e39207` so opencode cards launch the standard TUI — `default = "claude"`).
 - Validate config-local values: `Opencode.Interface` ∈ `{"mini", "full"}` (`Validate()`).
 - Reject a lingering ADR-001 `prompt_model` key at load time (`stalePromptModel`) — a loud migration to `model`; both the legacy top-level `[claude]` and `[agent.claude]` spellings are caught.
 - Leave the cross-package check (`Agent.Default` known) to `agent.Validate(cfg)` — `config` must not import `agent` (C8, dependency rule).
@@ -37,7 +37,7 @@ Config shape (DESIGN-002 §11): `Agent{Default, Claude{Binary, Model}, Opencode{
 - Module `loom` (go 1.23); the only external dependency is `github.com/BurntSushi/toml v1.4.0`.
 - `Load()` resolves `<user-config-dir>/loom/config.toml`. Missing file → `Default()` with `Database.Path` `~`-expanded; present file → decode, reject stale `prompt_model`, expand `~` in `Database.Path`, then `Validate()`.
 - `expandPath()` expands a leading `~` / `~/` in `Database.Path` only; bare `~` → home, while `~user/` and mid-string `~` are left alone.
-- `Default()`: agent `claude`, claude binary `claude`, opencode binary `opencode`, interface `mini`, tmux server `loom`, prefix `C-a`, db path `~/.config/loom/loom.db`.
+- `Default()`: agent `claude`, claude binary `claude`, opencode binary `opencode`, interface `full` (was `mini` until commit `5e39207`), tmux server `loom`, prefix `C-a`, db path `~/.config/loom/loom.db`.
 
 ## Dependencies
 

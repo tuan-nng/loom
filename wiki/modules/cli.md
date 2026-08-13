@@ -9,7 +9,7 @@ type: module
 ---
 ## Summary
 
-`internal/cli` is the **non-TUI command surface** — a small stdlib-`flag` subcommand router mirroring ADR-001 §6 (no cobra; the surface is fixed and fully enumerated). It landed as real Go source in T13: `Main(args []string) int` boots config + agent-validation + store, then dispatches the workspace/board/column/init/config/status/version/help trees. `loom` alone takes the terminal: it routes to the board TUI on a TTY and prints help on a pipe (the T16/T17 handoff lives in `internal/cli/tui.go`, whose `tuiService` wraps [BoardService](../modules/board.md) with the config's default agent and the `tmux -L <server> attach-session -t loom-<id>` argv); every state mutation is scriptable. Spec: ADR-001 §6, DESIGN-002 §13.
+`internal/cli` is the **non-TUI command surface** — a small stdlib-`flag` subcommand router mirroring ADR-001 §6 (no cobra; the surface is fixed and fully enumerated). It landed as real Go source in T13: `Main(args []string) int` boots config + agent-validation + store, then dispatches the workspace/board/column/init/config/status/version/help trees. `loom` alone takes the terminal: it routes to the board TUI on a TTY and prints help on a pipe (the T16/T17 handoff lives in `internal/cli/tui.go`, whose `tuiService` wraps [BoardService](../modules/board.md) with the config's default agent and `session.AttachCommandFor` — the enclosing-aware attach handoff (`link-window`/`select-window` into the user's tmux as a plain tab, `attach-session` standalone) — and `lazy.go`'s `materialize` now forwards `cfg.Session.Prefix` onto the `Tmux`); every state mutation is scriptable. Spec: ADR-001 §6, DESIGN-002 §13.
 
 ## Responsibilities
 

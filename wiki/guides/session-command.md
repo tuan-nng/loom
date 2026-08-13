@@ -14,7 +14,7 @@ Understand exactly how the command that runs inside a card's tmux session is ass
 1. **`BuildPrompt(card)`** (`agent/prompt.go`) — the title always, then `## Description`, `## Objective`, `## Acceptance Criteria` sections (each omitted when empty). Template: ADR-001 §4.5. No structure is inferred from markdown headings — sections pass through verbatim.
 2. **Driver builds argv** (`driver.Launch`) — e.g. claude: `[abs-claude, <prompt>]` (+`--model`); opencode: `[abs-opencode, --mini, --prompt, <prompt>]` (+ pass-throughs). argv[0] is the absolute path from `Resolve`.
 3. **`CommandLine(argv)`** (`agent/escape.go`) — every element is POSIX single-quoted (`'` → `'\''`), joined with spaces. tmux executes the session command via `$SHELL -c`, so this is what survives shell parsing. Newlines inside single quotes are fine.
-4. **tmux `new-session -d -s loom-<id> -c <root> <joined>`** — cwd set by `-c`, never by the driver.
+4. **tmux `new-session -d -s loom-<id> -n loom-<id> -c <root> <joined>`** — cwd set by `-c`, never by the driver; `-n` names the session's first window so a tab linked into the user's tmux reads `loom-<id>`.
 5. **`SendKeys`** (optional) — a literal tmux key name (e.g. `Enter`) sent via `tmux send-keys` **after** the probe passes. Never part of the `$SHELL -c` string, so never shell-quoted. Ships as `""` for both drivers (opencode auto-submits).
 
 ## Debugging a session that dies instantly

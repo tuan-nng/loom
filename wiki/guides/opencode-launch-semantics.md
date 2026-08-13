@@ -7,14 +7,14 @@ tags: [wiki, guide, opencode, agent]
 
 ## Goal
 
-Understand (and re-verify) how loom launches opencode: what argv it produces, why `--prompt` needs no Enter, and what to re-probe when opencode bumps majors.
+Understand (and re-verify) how loom launches opencode: what argv it produces, why `--prompt` needs no Enter, and what to re-probe when opencode bumps majors. Default `interface` is `full` (the standard TUI) since commit `5e39207`.
 
 ## The shipped argv (DESIGN-002 §9.2)
 
 | `interface` | argv | When the session ends |
 |---|---|---|
-| `mini` (default) | `[<abs-opencode>, --mini, --prompt, <ctx>]` | user quits the split-footer REPL |
-| `full` | `[<abs-opencode>, --prompt, <ctx>]` | user quits the full TUI |
+| `full` (default since `5e39207`) | `[<abs-opencode>, --prompt, <ctx>]` | user quits the full TUI |
+| `mini` | `[<abs-opencode>, --mini, --prompt, <ctx>]` | user quits the split-footer REPL |
 
 Pass-throughs appended when set: `model` → `--model <provider/model>`, `opencode_agent` → `--agent <name>`, `auto_approve` → `--auto`. `SendKeys` is `""` for both interfaces.
 
