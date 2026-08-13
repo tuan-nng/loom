@@ -24,19 +24,15 @@ func (t tuiService) DefaultAgent() string { return t.defaultAgent }
 
 // TmuxAttach builds the attach handoff the TUI runs via tea.ExecProcess:
 // tmux owns the terminal while attached, and BubbleTea restores the board
-// when the handoff returns (ADR-001 §4.4, T17). Inside an enclosing tmux
-// client ($TMUX set) it opens a new window of that outer session instead of
-// nesting a second tmux client inside the current pane (mirrors
-// session.Tmux.AttachCommand; duplicated here because bin is unexported),
-// so the handoff returns almost immediately and the board reappears with
-// the session available as a tab. Outside tmux, falls back to a direct
-// attach.
+// when the handoff returns (ADR-001 §4.4, T17). On an enclosing tmux client
+// ($TMUX set) the handoff links the session's window into the enclosing
+// session as a normal tab — a plain pane, not a nested client — so it returns
+// almost immediately and the board reappears with the session available as a
+// tab; standalone it is a direct attach. The decision lives in
+// session.AttachCommand, reached here via AttachCommandFor so the TUI and the
+// session manager cannot drift apart.
 func (t tuiService) TmuxAttach(cardID string) (*exec.Cmd, error) {
-	name := session.SessionName(cardID)
-	if os.Getenv("TMUX") != "" {
-		return exec.Command("tmux", "new-window", "-n", name, "--", "tmux", "-L", t.tmuxServer, "attach-session", "-t", name), nil
-	}
-	return exec.Command("tmux", "-L", t.tmuxServer, "attach-session", "-t", name), nil
+	return session.AttachCommandFor(t.tmuxServer, session.SessionName(cardID))
 }
 
 // runTUI boots the board TUI for the resolved selection and blocks until it

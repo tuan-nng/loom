@@ -68,6 +68,7 @@ func (s *lazySession) materialize() (*session.Manager, error) {
 		s.err = err
 		return nil, err
 	}
+	tm.Prefix = s.cfg.Session.Prefix
 	s.m = session.NewManager(tm, s.cfg, s.db)
 	return s.m, nil
 }

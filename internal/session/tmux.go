@@ -1,6 +1,9 @@
-// Package session wraps tmux for the dedicated `-L <server>` model: one
-// detached session per card, `loom-<id>` naming, attach/detach handoff
-// (ADR-001 §4.4, DESIGN-002 §10.1).
+// Package session wraps tmux: one detached session per card, `loom-<id>`
+// naming, attach/detach handoff (ADR-001 §4.4, DESIGN-002 §10.1). When loom
+// itself runs inside an enclosing tmux client (`$TMUX` set), sessions are
+// managed on that enclosing server so a card opens as a plain linked window
+// (tab) rather than a nested tmux client; standalone, loom keeps its own
+// dedicated `-L <server>` socket.
 package session
 
 import (
@@ -14,7 +17,38 @@ import (
 
 type Tmux struct {
 	Server string
-	bin    string
+	// Prefix is the key binding the dedicated loom server uses to reach its
+	// own sessions (ADR-001 §4.4). It is applied to the `-L` server so a
+	// standalone attach never collides with a host's prefix; empty means the
+	// C-a default. It is not applied to an enclosing server (see Enclosing).
+	Prefix string
+	// enclosing is the socket path of the enclosing tmux server when loom
+	// runs inside a tmux client. When non-empty, sessions are created and
+	// managed on that server (`-S`) so they can be opened as plain linked
+	// windows — never nested clients. Empty means use the dedicated `-L
+	// Server` socket.
+	enclosing string
+	// pane is `$TMUX_PANE`, the pane loom itself runs in. It is how the
+	// enclosing session is identified: tmux resolves a command's "current
+	// session" from the calling client, not from `$TMUX`, so any command
+	// that must act on the user's session targets it explicitly via this
+	// pane rather than relying on an implicit default.
+	pane string
+	bin  string
+}
+
+// EnclosingSocket reports the socket path of the enclosing tmux server when
+// the loom process itself runs inside a tmux client (`$TMUX` set) — the first
+// comma-separated field of `$TMUX`. It returns "" when loom runs standalone.
+func EnclosingSocket() string {
+	s := os.Getenv("TMUX")
+	if s == "" {
+		return ""
+	}
+	if i := strings.IndexByte(s, ','); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func New(server string) (Tmux, error) {
@@ -22,7 +56,13 @@ func New(server string) (Tmux, error) {
 	if err != nil {
 		return Tmux{}, fmt.Errorf("session: tmux not found in PATH (install it: 'apt install tmux' or 'brew install tmux')")
 	}
-	t := Tmux{Server: server, bin: bin}
+	t := Tmux{
+		Server:    server,
+		Prefix:    "C-a",
+		enclosing: EnclosingSocket(),
+		pane:      os.Getenv("TMUX_PANE"),
+		bin:       bin,
+	}
 	out, err := t.run("-V")
 	if err != nil {
 		return Tmux{}, fmt.Errorf("session: tmux version check: %v", err)
@@ -34,11 +74,15 @@ func New(server string) (Tmux, error) {
 }
 
 func (t Tmux) NewSession(name, cwd, command string) error {
-	_, err := t.run("new-session", "-d", "-s", name, "-c", cwd, command)
+	// `-n` names the session's first window, so an enclosing-server link
+	// surfaces as a tab named `loom-<id>`.
+	_, err := t.run("new-session", "-d", "-s", name, "-n", name, "-c", cwd, command)
 	if err == nil {
+		t.configureServer()
 		return nil
 	}
 	if ok, _ := t.HasSession(name); ok {
+		t.configureServer()
 		return nil
 	}
 	// The first new-session on a cold server (which, with exit-empty on, is
@@ -48,12 +92,39 @@ func (t Tmux) NewSession(name, cwd, command string) error {
 	// that exists after a reported failure counts as success (the attempt
 	// committed before the client errored).
 	time.Sleep(100 * time.Millisecond)
-	if _, err = t.run("new-session", "-d", "-s", name, "-c", cwd, command); err != nil {
+	if _, err = t.run("new-session", "-d", "-s", name, "-n", name, "-c", cwd, command); err != nil {
 		if ok, _ := t.HasSession(name); ok {
+			t.configureServer()
 			return nil
 		}
 	}
 	return err
+}
+
+// configureServer applies the loom-owned server settings (ADR-001 §4.4) as
+// globals on the dedicated `-L` server. They make a standalone attach render
+// as a plain pane instead of a second tmux client: the prefix is remapped
+// (Prefix, default C-a) so a nested attach never collides with a host's
+// prefix, the status line is turned off, and `detach-on-destroy off` returns
+// a client to its terminal when its session is destroyed. It is a no-op on
+// an enclosing server: loom must never rewrite the user's own tmux globals.
+// Best-effort: a server that died between session creation and here is left
+// alone.
+func (t Tmux) configureServer() {
+	if t.enclosing != "" {
+		return
+	}
+	prefix := t.Prefix
+	if prefix == "" {
+		prefix = "C-a"
+	}
+	for _, args := range [][]string{
+		{"set-option", "-g", "prefix", prefix},
+		{"set-option", "-g", "status", "off"},
+		{"set-option", "-g", "detach-on-destroy", "off"},
+	} {
+		_, _ = t.run(args...)
+	}
 }
 
 func (t Tmux) HasSession(name string) (bool, error) {
@@ -83,7 +154,21 @@ func (t Tmux) SendKeys(name, keys string) error {
 	return err
 }
 
+// KillSession terminates a card's session and the agent running in it. On an
+// enclosing server the session's window is normally also linked into the
+// user's own session (see AttachCommand), and a linked window outlives
+// `kill-session` — the session goes away while the agent keeps running in an
+// orphaned tab. Killing the window instead destroys the pane (and the agent)
+// across every link, which empties the session and destroys it too; a
+// `kill-session` fallback covers a session whose window was already gone.
 func (t Tmux) KillSession(name string) error {
+	if t.enclosing != "" {
+		if _, err := t.run("kill-window", "-t", name); err == nil {
+			if ok, _ := t.HasSession(name); !ok {
+				return nil
+			}
+		}
+	}
 	_, err := t.run("kill-session", "-t", name)
 	return err
 }
@@ -110,19 +195,84 @@ func SessionName(id string) string {
 }
 
 // AttachCommand builds the tmux invocation that hands the terminal to
-// session name on t's `-L` server. When the caller is itself already
-// running inside an enclosing tmux client (`$TMUX` set), attaching directly
-// would nest a second tmux client inside the current pane; instead this
-// opens the session as a NEW WINDOW of that outer session — `tmux
-// new-window` reads `$TMUX` to target the enclosing server/session with no
-// `-L`/`-t` of its own — so "open" always surfaces as a tab, never a nested
-// attach. Outside tmux (no `$TMUX`), there is no outer session to add a tab
-// to, so it falls back to a direct attach.
+// session name. On an enclosing server (`enclosing` set, i.e. loom runs
+// inside a tmux client), the session's window is linked into the enclosing
+// session — `tmux link-window` targets the enclosing server/session via
+// `-S`/`$TMUX` — so the card opens as a normal tab (a plain pane, no nested
+// tmux client) and the handoff returns immediately. Re-opening a card whose
+// window is already linked selects that tab instead of linking a second time,
+// which would show the same window twice. Standalone (no enclosing server),
+// it falls back to a direct attach on the dedicated `-L` server.
 func (t Tmux) AttachCommand(name string) *exec.Cmd {
-	if os.Getenv("TMUX") != "" {
-		return exec.Command(t.bin, "new-window", "-n", name, "--", t.bin, "-L", t.Server, "attach-session", "-t", name)
+	if t.enclosing == "" {
+		return exec.Command(t.bin, "-L", t.Server, "attach-session", "-t", name)
 	}
-	return exec.Command(t.bin, "-L", t.Server, "attach-session", "-t", name)
+	sess := t.enclosingSession()
+	if sess == "" {
+		// Pane unknown (no $TMUX_PANE): fall back to an unqualified link and
+		// let tmux pick the destination it would default to.
+		return exec.Command(t.bin, "-S", t.enclosing, "link-window", "-s", name)
+	}
+	if win := t.linkedWindow(sess, name); win != "" {
+		return exec.Command(t.bin, "-S", t.enclosing, "select-window", "-t", sess+":"+win)
+	}
+	return exec.Command(t.bin, "-S", t.enclosing, "link-window", "-s", name, "-t", sess)
+}
+
+// enclosingSession returns the id of the session holding the pane loom runs
+// in, or "" when it cannot be determined. tmux derives a command's current
+// session from the calling client, so a loom process that is not itself a
+// client (the common case for these bookkeeping calls) has no reliable
+// implicit session; resolving it from $TMUX_PANE makes the target explicit
+// and keeps loom off whichever session tmux would otherwise have guessed.
+func (t Tmux) enclosingSession() string {
+	if t.pane == "" {
+		return ""
+	}
+	out, err := t.run("display-message", "-p", "-t", t.pane, "#{session_id}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// linkedWindow reports the id of session name's current window — the one
+// `link-window -s name` would link — when it is already linked into session
+// sess, else "". Windows are matched by id because ids are unique per server
+// and immune to renaming, and the id is what the caller targets: it is stable
+// across the window renumbering that closing a tab can trigger, whereas an
+// index resolved here could name a different tab by the time it is used.
+func (t Tmux) linkedWindow(sess, name string) string {
+	out, err := t.run("display-message", "-p", "-t", name, "#{window_id}")
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(out)
+	if id == "" {
+		return ""
+	}
+	out, err = t.run("list-windows", "-t", sess, "-F", "#{window_id}")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == id {
+			return id
+		}
+	}
+	return ""
+}
+
+// AttachCommandFor builds the attach handoff for card session name, resolving
+// the tmux binary and the enclosing server itself. It exists for callers that
+// hold only the configured server name (the TUI) and would otherwise have to
+// duplicate AttachCommand's enclosing-server logic.
+func AttachCommandFor(server, name string) (*exec.Cmd, error) {
+	t, err := New(server)
+	if err != nil {
+		return nil, err
+	}
+	return t.AttachCommand(name), nil
 }
 
 // SessionState reports one live session's name and whether a client is
@@ -171,7 +321,7 @@ func MissingServer(err error) bool {
 }
 
 func (t Tmux) run(args ...string) (string, error) {
-	cmd := exec.Command(t.bin, append([]string{"-L", t.Server}, args...)...)
+	cmd := exec.Command(t.bin, append(t.targetArgs(), args...)...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -182,6 +332,16 @@ func (t Tmux) run(args ...string) (string, error) {
 		return "", fmt.Errorf("session: tmux %v: %v", args, err)
 	}
 	return stdout.String(), nil
+}
+
+// targetArgs selects the server every tmux subcommand runs against: the
+// enclosing server (via `-S <socket>`) when loom runs inside a tmux client,
+// otherwise the dedicated `-L <Server>` socket.
+func (t Tmux) targetArgs() []string {
+	if t.enclosing != "" {
+		return []string{"-S", t.enclosing}
+	}
+	return []string{"-L", t.Server}
 }
 
 func parseSessionNames(out string) []string {

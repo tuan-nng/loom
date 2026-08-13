@@ -82,7 +82,8 @@ func (m *Manager) Ensure(ctx context.Context, c store.Card) error {
 		ok = false // cold -L server (exit-empty): absence, not failure (invariant 3)
 	}
 	if ok {
-		return nil // reuse: no new run
+		m.tm.configureServer() // ensure loom-owned settings on reuse too (ADR-001 §4.4)
+		return nil             // reuse: no new run
 	}
 
 	ac := m.cardForAgent(c)
@@ -227,6 +228,7 @@ func (m *Manager) Attach(ctx context.Context, c store.Card) error {
 	if !ok {
 		return fmt.Errorf("session: card %s has no live session", c.ID)
 	}
+	m.tm.configureServer() // settings survive on the server; cheap idempotent ensure
 	cmd := m.tm.AttachCommand(name)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
